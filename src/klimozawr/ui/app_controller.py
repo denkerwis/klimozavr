@@ -28,7 +28,7 @@ from klimozawr.ui.dialogs.settings_dialog import SettingsDialog
 from klimozawr.ui.dialogs.traceroute_dialog import TracerouteDialog
 from klimozawr.ui.windows.user_main import UserMainWindow
 from klimozawr.ui.windows.admin_main import AdminMainWindow
-from klimozawr.ui.strings import role_display, status_display, tr
+from klimozawr.ui.strings import role_display, status_display, tr as _t
 
 logger = logging.getLogger("klimozawr.controller")
 
@@ -147,7 +147,7 @@ class AppController(QObject):
                 self._show_user()
         except Exception as e:
             logger.exception("login flow failed")
-            QMessageBox.critical(None, tr("dialog.window_open_error_title"), tr("dialog.window_open_error_message", error=e))
+            QMessageBox.critical(None, _t("dialog.window_open_error_title"), _t("dialog.window_open_error_message", error=e))
 
     def _show_user(self) -> None:
         self._close_windows()
@@ -251,7 +251,7 @@ class AppController(QObject):
     def _wire_admin_window(self, win: AdminMainWindow) -> None:
         # --- inject Refresh button into admin UI (without touching admin_main.py) ---
         if not hasattr(win, "btn_refresh"):
-            win.btn_refresh = QPushButton(tr("admin.button.refresh"))
+            win.btn_refresh = QPushButton(_t("admin.button.refresh"))
             host = getattr(win, "btn_dev_export", None)  # рядом с экспортом устройств
             parent = host.parentWidget() if host is not None else None
             lay = parent.layout() if parent is not None else None
@@ -341,20 +341,20 @@ class AppController(QObject):
         return [self._snapshots[k] for k in sorted(self._snapshots.keys())]
 
     # --- engine callbacks ---
-    def _enqueue_tick(self, tr: TickResult) -> None:
-        self.tick_received.emit(tr)
+    def _enqueue_tick(self, tick: TickResult) -> None:
+        self.tick_received.emit(tick)
 
     def _enqueue_alert(self, device_id: int, level: str) -> None:
         self.alert_received.emit(int(device_id), str(level).upper())
 
-    def _on_tick_from_engine(self, tr: TickResult) -> None:
+    def _on_tick_from_engine(self, tick: TickResult) -> None:
         # store raw tick
-        self.telemetry.insert_tick(tr)
+        self.telemetry.insert_tick(tick)
 
-        st = self._engine.get_state(tr.device_id)
+        st = self._engine.get_state(tick.device_id)
 
         # --- status for UI (RED is time-based in state, not always in tr.status) ---
-        effective_status = str(getattr(st, "current_status", tr.status)).upper()
+        effective_status = str(getattr(st, "current_status", tick.status)).upper()
 
         # if device has crossed red threshold in engine state, show RED in UI
         if st and effective_status != "GREEN" and getattr(st, "red_start_utc", None):
@@ -362,60 +362,60 @@ class AppController(QObject):
 
         # transition events + alert resolution logic
         if st and st.current_status:
-            snap = self._snapshots.get(tr.device_id)
+            snap = self._snapshots.get(tick.device_id)
             prev = snap.get("status") if snap else None
 
             if prev and prev != effective_status:
                 self.telemetry.insert_event(
-                    tr.ts_utc, tr.device_id, "status_transition", f"{prev}->{effective_status}"
+                    tick.ts_utc, tick.device_id, "status_transition", f"{prev}->{effective_status}"
                 )
-                self._play_status_sound(tr.device_id, effective_status)
+                self._play_status_sound(tick.device_id, effective_status)
 
             # resolve alerts when green
             if effective_status == "GREEN":
-                self.alerts.resolve_device_alerts(tr.device_id)
+                self.alerts.resolve_device_alerts(tick.device_id)
             # if we're not RED anymore, ensure RED alerts are not hanging
             elif effective_status == "YELLOW":
-                self.alerts.resolve_level(tr.device_id, "RED")
+                self.alerts.resolve_level(tick.device_id, "RED")
 
             if effective_status == "GREEN":
-                self._sound_book.pop((int(tr.device_id), "YELLOW"), None)
-                self._sound_book.pop((int(tr.device_id), "RED"), None)
+                self._sound_book.pop((int(tick.device_id), "YELLOW"), None)
+                self._sound_book.pop((int(tick.device_id), "RED"), None)
             elif effective_status == "YELLOW":
-                self._sound_book.pop((int(tr.device_id), "RED"), None)
+                self._sound_book.pop((int(tick.device_id), "RED"), None)
 
         # update snapshot for UI
-        if tr.device_id in self._snapshots:
-            s = self._snapshots[tr.device_id]
+        if tick.device_id in self._snapshots:
+            s = self._snapshots[tick.device_id]
             s["status"] = effective_status
-            s["unstable"] = tr.unstable
-            s["loss_pct"] = tr.loss_pct
-            s["rtt_last_ms"] = tr.rtt_last_ms
-            s["last_tick_utc"] = tr.ts_utc
+            s["unstable"] = tick.unstable
+            s["loss_pct"] = tick.loss_pct
+            s["rtt_last_ms"] = tick.rtt_last_ms
+            s["last_tick_utc"] = tick.ts_utc
 
         self._append_raw_log(
-            tr.device_id,
-            tr(
+            tick.device_id,
+            _t(
                 "raw.status_line",
-                time=tr.ts_utc.strftime("%H:%M:%S"),
+                time=tick.ts_utc.strftime("%H:%M:%S"),
                 status=status_display(effective_status),
-                loss=tr.loss_pct,
-                rtt=tr.rtt_last_ms or tr("placeholder.na"),
+                loss=tick.loss_pct,
+                rtt=tick.rtt_last_ms or _t("placeholder.na"),
             ),
         )
 
         # minute aggregation (simple in-app, best-effort)
-        self._aggregate_minute(tr)
+        self._aggregate_minute(tick)
 
-        self.device_updated.emit(tr.device_id)
+        self.device_updated.emit(tick.device_id)
 
         # if selected device: refresh chart lazily (not every tick)
-        if self._selected_device_id == tr.device_id:
+        if self._selected_device_id == tick.device_id:
             win = self._admin_win or self._user_win
             details = getattr(win, "details", None)
             if details and hasattr(details, "current_period_key"):
                 self._refresh_chart(details.current_period_key)
-                self._update_details_panel(tr.device_id)
+                self._update_details_panel(tick.device_id)
 
     def _on_alert_from_engine(self, device_id: int, level: str) -> None:
         st = self._engine.get_state(device_id)
@@ -434,7 +434,7 @@ class AppController(QObject):
         if level == "YELLOW":
             started = (st.yellow_start_utc or st.first_seen_utc).isoformat()
             notify_after = int(snap.get("yellow_notify_after_secs", 30))
-            msg = tr(
+            msg = _t(
                 "alerts.message.yellow",
                 level=status_display(level),
                 seconds=notify_after,
@@ -442,7 +442,7 @@ class AppController(QObject):
         else:
             started = (st.red_start_utc or st.first_seen_utc).isoformat()
             to_red = int(snap.get("yellow_to_red_secs", 120))
-            msg = tr(
+            msg = _t(
                 "alerts.message.red",
                 level=status_display(level),
                 seconds=to_red,
@@ -572,8 +572,8 @@ class AppController(QObject):
         last_tick = snap.get("last_tick_utc")
         rtt = snap.get("rtt_last_ms")
         loss = snap.get("loss_pct")
-        rtt_txt = tr("placeholder.na") if rtt is None else f"{int(rtt)} {tr('unit.ms')}"
-        loss_txt = tr("placeholder.na") if loss is None else f"{int(loss)}%"
+        rtt_txt = _t("placeholder.na") if rtt is None else f"{int(rtt)} {_t('unit.ms')}"
+        loss_txt = _t("placeholder.na") if loss is None else f"{int(loss)}%"
         last_txt = win.details.format_timestamp(last_tick)
         elapsed_txt = self._format_elapsed(device_id, status)
 
@@ -594,7 +594,7 @@ class AppController(QObject):
     def _format_elapsed(self, device_id: int, status: str) -> str:
         st = self._engine.get_state(device_id)
         if not st:
-            return tr("placeholder.na")
+            return _t("placeholder.na")
         base: datetime | None
         if status == "GREEN":
             base = st.last_ok_utc or st.first_seen_utc
@@ -603,21 +603,21 @@ class AppController(QObject):
         elif status == "RED":
             base = st.red_start_utc or st.first_seen_utc
         else:
-            return tr("placeholder.na")
+            return _t("placeholder.na")
         if not base:
-            return tr("placeholder.na")
+            return _t("placeholder.na")
         delta = datetime.now(timezone.utc) - base
         secs = int(delta.total_seconds())
         mins, sec = divmod(secs, 60)
         hrs, min_ = divmod(mins, 60)
         days, hr = divmod(hrs, 24)
         if days > 0:
-            return f"{days}{tr('unit.day_short')} {hr}{tr('unit.hour_short')} {min_}{tr('unit.minute_short')}"
+            return f"{days}{_t('unit.day_short')} {hr}{_t('unit.hour_short')} {min_}{_t('unit.minute_short')}"
         if hrs > 0:
-            return f"{hr}{tr('unit.hour_short')} {min_}{tr('unit.minute_short')} {sec}{tr('unit.second_short')}"
+            return f"{hr}{_t('unit.hour_short')} {min_}{_t('unit.minute_short')} {sec}{_t('unit.second_short')}"
         if mins > 0:
-            return f"{min_}{tr('unit.minute_short')} {sec}{tr('unit.second_short')}"
-        return f"{sec}{tr('unit.second_short')}"
+            return f"{min_}{_t('unit.minute_short')} {sec}{_t('unit.second_short')}"
+        return f"{sec}{_t('unit.second_short')}"
 
     def _append_raw_log(self, device_id: int, line: str) -> None:
         buf = self._raw_logs.setdefault(int(device_id), [])
@@ -662,12 +662,12 @@ class AppController(QObject):
             except Exception as exc:
                 output = f"{type(exc).__name__}: {exc}"
 
-            self._append_raw_log(did, tr("raw.traceroute_start", ip=ip))
+            self._append_raw_log(did, _t("raw.traceroute_start", ip=ip))
             for line in output.splitlines()[:20]:
                 self._append_raw_log(did, line)
 
             def _show() -> None:
-                title = tr("traceroute.title", target=name or ip)
+                title = _t("traceroute.title", target=name or ip)
                 dlg = TracerouteDialog(title=title, output=output, parent=self._admin_win or self._user_win)
                 dlg.exec()
                 self._update_details_panel(did)
@@ -685,9 +685,9 @@ class AppController(QObject):
         default = self.paths.exports_dir / f"{label}_logs.csv"
         path, _ = QFileDialog.getSaveFileName(
             self._admin_win or self._user_win,
-            tr("dialog.export_selected_title"),
+            _t("dialog.export_selected_title"),
             str(default),
-            tr("dialog.export_logs_filter"),
+            _t("dialog.export_logs_filter"),
         )
         if not path:
             return
@@ -696,17 +696,17 @@ class AppController(QObject):
         self.telemetry.export_raw_csv(Path(path), device_id=int(did), since_utc=since)
         QMessageBox.information(
             self._admin_win or self._user_win,
-            tr("dialog.export_completed_title"),
-            tr("dialog.export_completed_message"),
+            _t("dialog.export_completed_title"),
+            _t("dialog.export_completed_message"),
         )
 
     def export_all_logs(self) -> None:
-        default = self.paths.exports_dir / tr("dialog.export_all_logs_filename")
+        default = self.paths.exports_dir / _t("dialog.export_all_logs_filename")
         path, _ = QFileDialog.getSaveFileName(
             self._admin_win or self._user_win,
-            tr("dialog.export_all_title"),
+            _t("dialog.export_all_title"),
             str(default),
-            tr("dialog.export_logs_filter"),
+            _t("dialog.export_logs_filter"),
         )
         if not path:
             return
@@ -715,8 +715,8 @@ class AppController(QObject):
         self.telemetry.export_raw_csv(Path(path), device_id=None, since_utc=since)
         QMessageBox.information(
             self._admin_win or self._user_win,
-            tr("dialog.export_completed_title"),
-            tr("dialog.export_completed_message"),
+            _t("dialog.export_completed_title"),
+            _t("dialog.export_completed_message"),
         )
 
     def open_settings(self) -> None:
@@ -737,8 +737,8 @@ class AppController(QObject):
         logger.info("UI: settings updated global sounds down=%s up=%s", down, up)
         QMessageBox.information(
             self._admin_win,
-            tr("dialog.settings_saved_title"),
-            tr("dialog.settings_saved_message"),
+            _t("dialog.settings_saved_title"),
+            _t("dialog.settings_saved_message"),
         )
 
     def _prepare_device_payload(self, payload: dict) -> dict:
@@ -787,14 +787,14 @@ class AppController(QObject):
 
         self._admin_win.devices_list.clear()
         for d in self.devices.list_devices():
-            it = QListWidgetItem(tr("admin.devices_list_item", ip=d.ip, name=d.name))
+            it = QListWidgetItem(_t("admin.devices_list_item", ip=d.ip, name=d.name))
             it.setData(Qt.UserRole, int(d.id))
             self._admin_win.devices_list.addItem(it)
 
         self._admin_win.users_list.clear()
         for u in self.users.list_users():
             it = QListWidgetItem(
-                tr(
+                _t(
                     "admin.users_list_item",
                     username=u["username"],
                     role=role_display(u["role"]),
@@ -821,8 +821,8 @@ class AppController(QObject):
             if res != QDialog.Accepted:
                 QMessageBox.information(
                     self._admin_win,
-                    tr("dialog.device_cancelled_title"),
-                    tr("dialog.device_cancelled_message"),
+                    _t("dialog.device_cancelled_title"),
+                    _t("dialog.device_cancelled_message"),
                 )
                 return
 
@@ -838,12 +838,12 @@ class AppController(QObject):
 
             QMessageBox.information(
                 self._admin_win,
-                tr("dialog.device_saved_title"),
-                tr("dialog.device_saved_message", action=action),
+                _t("dialog.device_saved_title"),
+                _t("dialog.device_saved_message", action=action),
             )
         except Exception as e:
             logger.exception("admin_add_device failed")
-            QMessageBox.critical(self._admin_win, tr("dialog.window_open_error_title"), f"{type(e).__name__}: {e}")
+            QMessageBox.critical(self._admin_win, _t("dialog.window_open_error_title"), f"{type(e).__name__}: {e}")
 
     def admin_edit_device(self) -> None:
         if not self._admin_win:
@@ -892,9 +892,9 @@ class AppController(QObject):
             return
         path, _ = QFileDialog.getSaveFileName(
             self._admin_win,
-            tr("dialog.export_devices_title"),
-            tr("dialog.export_devices_filename"),
-            tr("dialog.csv_filter"),
+            _t("dialog.export_devices_title"),
+            _t("dialog.export_devices_filename"),
+            _t("dialog.csv_filter"),
         )
         if not path:
             return
@@ -902,8 +902,8 @@ class AppController(QObject):
         self.devices.export_devices_csv(Path(path))
         QMessageBox.information(
             self._admin_win,
-            tr("dialog.export_devices_title"),
-            tr("dialog.export_devices_message"),
+            _t("dialog.export_devices_title"),
+            _t("dialog.export_devices_message"),
         )
 
     def admin_import_devices_csv(self) -> None:
@@ -911,23 +911,23 @@ class AppController(QObject):
             return
         path, _ = QFileDialog.getOpenFileName(
             self._admin_win,
-            tr("dialog.import_devices_title"),
+            _t("dialog.import_devices_title"),
             "",
-            tr("dialog.csv_filter"),
+            _t("dialog.csv_filter"),
         )
         if not path:
             return
         from pathlib import Path
         rep = self.devices.import_devices_csv(Path(path), max_devices=20)
-        msg = tr(
+        msg = _t(
             "dialog.import_report_summary",
             added=rep.added,
             updated=rep.updated,
             skipped=rep.skipped,
         )
         if rep.reasons:
-            msg += "\n\n" + tr("dialog.import_report_reasons_header") + "\n" + "\n".join(rep.reasons[:30])
-        QMessageBox.information(self._admin_win, tr("dialog.import_report_title"), msg)
+            msg += "\n\n" + _t("dialog.import_report_reasons_header") + "\n" + "\n".join(rep.reasons[:30])
+        QMessageBox.information(self._admin_win, _t("dialog.import_report_title"), msg)
 
         self._reload_devices()
         self._refresh_admin_lists()
@@ -956,12 +956,12 @@ class AppController(QObject):
             self._refresh_admin_lists()
             QMessageBox.information(
                 self._admin_win,
-                tr("dialog.user_created_title"),
-                tr("dialog.user_created_message"),
+                _t("dialog.user_created_title"),
+                _t("dialog.user_created_message"),
             )
         except Exception as e:
             logger.exception("admin_create_user failed")
-            QMessageBox.critical(self._admin_win, tr("dialog.window_open_error_title"), f"{type(e).__name__}: {e}")
+            QMessageBox.critical(self._admin_win, _t("dialog.window_open_error_title"), f"{type(e).__name__}: {e}")
 
     def admin_delete_user(self) -> None:
         if not self._admin_win:
@@ -975,8 +975,8 @@ class AppController(QObject):
         if self.session and uid == self.session.user_id:
             QMessageBox.warning(
                 self._admin_win,
-                tr("dialog.user_delete_self_title"),
-                tr("dialog.user_delete_self_message"),
+                _t("dialog.user_delete_self_title"),
+                _t("dialog.user_delete_self_message"),
             )
             return
         self.users.delete_user(uid)
@@ -997,8 +997,8 @@ class AppController(QObject):
         if not item:
             QMessageBox.warning(
                 self._admin_win,
-                tr("dialog.user_select_title"),
-                tr("dialog.user_select_message"),
+                _t("dialog.user_select_title"),
+                _t("dialog.user_select_message"),
             )
             return
 
@@ -1014,12 +1014,12 @@ class AppController(QObject):
             logger.info("DB: password changed user_id=%s", uid)
             QMessageBox.information(
                 self._admin_win,
-                tr("dialog.user_password_changed_title"),
-                tr("dialog.user_password_changed_message"),
+                _t("dialog.user_password_changed_title"),
+                _t("dialog.user_password_changed_message"),
             )
         except Exception as e:
             logger.exception("admin_set_user_password failed")
-            QMessageBox.critical(self._admin_win, tr("dialog.window_open_error_title"), f"{type(e).__name__}: {e}")
+            QMessageBox.critical(self._admin_win, _t("dialog.window_open_error_title"), f"{type(e).__name__}: {e}")
 
     def admin_toggle_user_role(self) -> None:
         if not self._admin_win:
@@ -1038,8 +1038,8 @@ class AppController(QObject):
         self._refresh_admin_lists()
 
     # --- minute aggregation (best-effort) ---
-    def _aggregate_minute(self, tr: TickResult) -> None:
-        minute = tr.ts_utc.replace(second=0, microsecond=0)
+    def _aggregate_minute(self, tick: TickResult) -> None:
+        minute = tick.ts_utc.replace(second=0, microsecond=0)
         if self._current_minute is None:
             self._current_minute = minute
 
@@ -1049,13 +1049,13 @@ class AppController(QObject):
             self._minute_bucket.clear()
             self._current_minute = minute
 
-        b = self._minute_bucket.setdefault(tr.device_id, {"ok_ticks": 0, "ticks": 0, "rtts": [], "losses": []})
+        b = self._minute_bucket.setdefault(tick.device_id, {"ok_ticks": 0, "ticks": 0, "rtts": [], "losses": []})
         b["ticks"] += 1
-        if tr.loss_pct < 100:
+        if tick.loss_pct < 100:
             b["ok_ticks"] += 1
-        if tr.rtt_avg_ms is not None:
-            b["rtts"].append(tr.rtt_avg_ms)
-        b["losses"].append(tr.loss_pct)
+        if tick.rtt_avg_ms is not None:
+            b["rtts"].append(tick.rtt_avg_ms)
+        b["losses"].append(tick.loss_pct)
 
     def _flush_minute(self, minute: datetime) -> None:
         for did, b in self._minute_bucket.items():
