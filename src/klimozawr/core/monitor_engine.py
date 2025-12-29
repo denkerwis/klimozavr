@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import socket
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
@@ -8,6 +9,7 @@ from datetime import datetime, timezone
 
 from klimozawr.core.icmp import IcmpClient
 from klimozawr.core.models import Device, DeviceRuntimeState, TickResult
+from klimozawr.core.net import is_ipv4
 from klimozawr.core.status import derive_tick_metrics, compute_status, should_promote_to_red
 from klimozawr.core.alerts import should_fire_yellow, should_fire_red, AlertDecision
 
@@ -33,9 +35,11 @@ class MonitorEngine:
 
         self.on_tick: callable[[TickResult], None] | None = None
         self.on_alert: callable[[int, str], None] | None = None  # (device_id, level)
+        self.on_resolve: callable[[int, str | None, datetime | None], None] | None = None
 
         self._in_flight: set[int] = set()
         self._futures: dict[Future, int] = {}
+        self._dns_ttl_secs = 300
 
     def set_devices(self, devices: list[Device]) -> None:
         with self._lock:
@@ -125,7 +129,11 @@ class MonitorEngine:
             self._futures[fut] = d.id
 
     def _ping_device_tick(self, client: IcmpClient, d: Device, ts_utc: datetime) -> None:
-        rtts = client.ping_three(d.ip, timeout_ms=d.ping_timeout_ms)
+        target_ip = self._resolve_target(d, ts_utc)
+        if target_ip:
+            rtts = client.ping_three(target_ip, timeout_ms=d.ping_timeout_ms)
+        else:
+            rtts = [None, None, None]
         loss_pct, rtt_last, rtt_avg, unstable = derive_tick_metrics(rtts)
         tick_ok = (loss_pct < 100)
 
@@ -164,6 +172,9 @@ class MonitorEngine:
                         st.last_yellow_alert_utc = None
                 if should_promote_to_red(ts_utc, st.yellow_start_utc, d.yellow_to_red_secs):
                     status = "RED"
+                    st.red_start_utc = st.red_start_utc or ts_utc
+                    st.red_acked = False
+                    st.last_red_alert_utc = None
             elif status == "RED":
                 if prev_status != "RED":
                     st.red_start_utc = st.red_start_utc or ts_utc
@@ -218,6 +229,29 @@ class MonitorEngine:
         )
         if self.on_tick:
             self.on_tick(tr)
+
+    def _resolve_target(self, d: Device, ts_utc: datetime) -> str | None:
+        target = str(d.target or "").strip()
+        if not target:
+            return None
+        if is_ipv4(target):
+            return target
+        if d.resolved_ip and d.resolved_at:
+            age = (ts_utc - d.resolved_at).total_seconds()
+            if age < self._dns_ttl_secs:
+                return d.resolved_ip
+        try:
+            infos = socket.getaddrinfo(target, None, family=socket.AF_INET)
+            ip = infos[0][4][0] if infos else None
+        except Exception:
+            logger.exception("dns resolve failed target=%s", target)
+            return d.resolved_ip
+        if ip:
+            d.resolved_ip = ip
+            d.resolved_at = ts_utc
+            if self.on_resolve:
+                self.on_resolve(d.id, ip, ts_utc)
+        return ip or d.resolved_ip
 
     def ack_device(self, device_id: int, level: str) -> None:
         with self._lock:

@@ -7,10 +7,9 @@ from typing import Literal, Optional
 StatusColor = Literal["GREEN", "YELLOW", "RED"]
 
 
-@dataclass(frozen=True)
+@dataclass
 class Device:
     id: int
-    ip: str
     name: str
     comment: str
     location: str
@@ -18,6 +17,9 @@ class Device:
     yellow_to_red_secs: int
     yellow_notify_after_secs: int
     ping_timeout_ms: int
+    target: str
+    resolved_ip: Optional[str] = None
+    resolved_at: Optional[datetime] = None
     icon_path: str = ""
     icon_scale: int = 100
     sound_down_path: str = ""

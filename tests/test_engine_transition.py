@@ -18,7 +18,6 @@ def test_yellow_to_red_transition_triggers_alerts():
     engine = MonitorEngine(max_workers=1)
     device = Device(
         id=1,
-        ip="127.0.0.1",
         name="test",
         comment="",
         location="",
@@ -26,6 +25,7 @@ def test_yellow_to_red_transition_triggers_alerts():
         yellow_to_red_secs=1,
         yellow_notify_after_secs=0,
         ping_timeout_ms=100,
+        target="127.0.0.1",
     )
     engine.set_devices([device])
 

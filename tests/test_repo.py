@@ -21,7 +21,7 @@ def test_user_flow_and_device_upsert():
 
         dr = DeviceRepo(db)
         action, did = dr.upsert_device({
-            "ip": "192.168.0.1",
+            "target": "192.168.0.1",
             "name": "router",
             "comment": "",
             "location": "",
@@ -36,7 +36,7 @@ def test_user_flow_and_device_upsert():
         })
         assert action == "added"
         action2, did2 = dr.upsert_device({
-            "ip": "192.168.0.1",
+            "target": "192.168.0.1",
             "name": "router2",
             "comment": "x",
             "location": "lab",

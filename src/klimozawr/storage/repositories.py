@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import ipaddress
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,6 +10,7 @@ from typing import Optional
 from argon2 import PasswordHasher, exceptions as argon2_exc
 
 from klimozawr.core.models import Device, TickResult
+from klimozawr.core.net import is_valid_target
 from klimozawr.storage.db import SQLiteDatabase
 
 logger = logging.getLogger("klimozawr.repo")
@@ -94,10 +94,12 @@ class DeviceRepo:
         rows = self.db.connect().execute("SELECT * FROM devices ORDER BY id;").fetchall()
         out: list[Device] = []
         for r in rows:
+            target = (r["ip"] or "").strip()
+            resolved_at = r["resolved_at_utc"] if "resolved_at_utc" in r.keys() else None
             out.append(
                 Device(
                     id=int(r["id"]),
-                    ip=r["ip"],
+                    target=target,
                     name=r["name"],
                     comment=r["comment"],
                     location=r["location"],
@@ -105,6 +107,8 @@ class DeviceRepo:
                     yellow_to_red_secs=int(r["yellow_to_red_secs"]),
                     yellow_notify_after_secs=int(r["yellow_notify_after_secs"]),
                     ping_timeout_ms=int(r["ping_timeout_ms"]),
+                    resolved_ip=r["resolved_ip"] if "resolved_ip" in r.keys() else None,
+                    resolved_at=parse_iso(resolved_at) if resolved_at else None,
                     icon_path=r["icon_path"],
                     icon_scale=int(r["icon_scale"]),
                     sound_down_path=r["sound_down_path"],
@@ -117,12 +121,13 @@ class DeviceRepo:
         """
         Returns (action, device_id) where action in ('added','updated')
         """
-        ip = d["ip"].strip()
-        ipaddress.ip_address(ip)
+        target = (d.get("target") or d.get("ip") or "").strip()
+        if not is_valid_target(target):
+            raise ValueError(f"invalid target={target}")
 
         now = utc_now_iso()
         conn = self.db.connect()
-        row = conn.execute("SELECT id FROM devices WHERE ip=?;", (ip,)).fetchone()
+        row = conn.execute("SELECT id FROM devices WHERE ip=?;", (target,)).fetchone()
         if row:
             did = int(row["id"])
             conn.execute(
@@ -153,7 +158,7 @@ class DeviceRepo:
             if is_update_event:
                 conn.execute(
                     "INSERT INTO events(ts_utc, device_id, kind, detail) VALUES (?,?,?,?);",
-                    (now, did, "device_updated", f"device updated by ip={ip}"),
+                    (now, did, "device_updated", f"device updated by target={target}"),
                 )
             return ("updated", did)
 
@@ -167,7 +172,7 @@ class DeviceRepo:
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?);
             """,
             (
-                ip,
+                target,
                 d.get("name", ""),
                 d.get("comment", ""),
                 d.get("location", ""),
@@ -186,18 +191,19 @@ class DeviceRepo:
         did = int(conn.execute("SELECT last_insert_rowid() AS id;").fetchone()["id"])
         conn.execute(
             "INSERT INTO events(ts_utc, device_id, kind, detail) VALUES (?,?,?,?);",
-            (now, did, "device_added", f"device added ip={ip}"),
+            (now, did, "device_added", f"device added target={target}"),
         )
         return ("added", did)
 
     def update_device_by_id(self, device_id: int, d: dict, *, is_update_event: bool = True) -> None:
-        ip = d["ip"].strip()
-        ipaddress.ip_address(ip)
+        target = (d.get("target") or d.get("ip") or "").strip()
+        if not is_valid_target(target):
+            raise ValueError(f"invalid target={target}")
 
         conn = self.db.connect()
-        existing = conn.execute("SELECT id FROM devices WHERE ip=?;", (ip,)).fetchone()
+        existing = conn.execute("SELECT id FROM devices WHERE ip=?;", (target,)).fetchone()
         if existing and int(existing["id"]) != int(device_id):
-            raise ValueError(f"device with ip={ip} already exists")
+            raise ValueError(f"device with target={target} already exists")
 
         now = utc_now_iso()
         conn.execute(
@@ -210,7 +216,7 @@ class DeviceRepo:
             WHERE id=?;
             """,
             (
-                ip,
+                target,
                 d.get("name", ""),
                 d.get("comment", ""),
                 d.get("location", ""),
@@ -229,7 +235,7 @@ class DeviceRepo:
         if is_update_event:
             conn.execute(
                 "INSERT INTO events(ts_utc, device_id, kind, detail) VALUES (?,?,?,?);",
-                (now, int(device_id), "device_updated", f"device updated by id={device_id} ip={ip}"),
+                (now, int(device_id), "device_updated", f"device updated by id={device_id} target={target}"),
             )
 
     def delete_device(self, device_id: int) -> None:
@@ -252,7 +258,7 @@ class DeviceRepo:
             w.writeheader()
             for d in devices:
                 w.writerow({
-                    "ip": d.ip,
+                    "ip": d.target,
                     "name": d.name,
                     "comment": d.comment,
                     "location": d.location,
@@ -274,21 +280,25 @@ class DeviceRepo:
             r = csv.DictReader(f)
             for i, row in enumerate(r, start=2):
                 try:
-                    ip = (row.get("ip") or "").strip()
-                    if not ip:
+                    target = (row.get("ip") or "").strip()
+                    if not target:
                         skipped += 1
                         reasons.append(f"line {i}: missing ip")
                         continue
+                    if not is_valid_target(target):
+                        skipped += 1
+                        reasons.append(f"line {i}: invalid target={target}")
+                        continue
 
                     # enforce cap
-                    is_existing = conn.execute("SELECT 1 FROM devices WHERE ip=?;", (ip,)).fetchone() is not None
+                    is_existing = conn.execute("SELECT 1 FROM devices WHERE ip=?;", (target,)).fetchone() is not None
                     if not is_existing and (existing_count + added) >= max_devices:
                         skipped += 1
                         reasons.append(f"line {i}: device limit {max_devices} reached")
                         continue
 
                     payload = {
-                        "ip": ip,
+                        "target": target,
                         "name": (row.get("name") or "").strip(),
                         "comment": (row.get("comment") or "").strip(),
                         "location": (row.get("location") or "").strip(),
@@ -307,6 +317,17 @@ class DeviceRepo:
                     reasons.append(f"line {i}: {type(e).__name__}: {e}")
 
         return ImportReport(added=added, updated=updated, skipped=skipped, reasons=reasons)
+
+    def update_resolution(self, device_id: int, resolved_ip: str | None, resolved_at: datetime | None) -> None:
+        conn = self.db.connect()
+        conn.execute(
+            "UPDATE devices SET resolved_ip=?, resolved_at_utc=? WHERE id=?;",
+            (
+                resolved_ip,
+                resolved_at.isoformat() if resolved_at else None,
+                int(device_id),
+            ),
+        )
 
 
 class TelemetryRepo:
@@ -474,7 +495,7 @@ class AlertRepo:
         rows = self.db.connect().execute(
             """
             SELECT a.id, a.device_id, a.level, a.started_at_utc, a.last_fired_at_utc, a.message,
-                   d.ip, d.name
+                   d.ip AS target, d.name
             FROM alerts a
             JOIN devices d ON d.id = a.device_id
             WHERE a.acked_at_utc IS NULL AND a.resolved_at_utc IS NULL
