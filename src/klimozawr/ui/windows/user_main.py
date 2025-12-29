@@ -24,7 +24,12 @@ class UserMainWindow(BaseMainWindow):
         self.setMenuBar(menubar)
 
         # ВАЖНО: fit_viewport=True → плитки растягиваются на весь экран
-        self.cards = DeviceCardsView(fit_viewport=True, text_scale=1.4)
+        self.cards = DeviceCardsView(
+            fit_viewport=True,
+            text_scale=1.4,
+            min_tile_px=260,
+            max_tile_px=520,
+        )
 
         monitor_tab = QWidget()
         ml = QVBoxLayout()
