@@ -13,18 +13,19 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
+from klimozawr.ui.strings import tr
 
 class SettingsDialog(QDialog):
     def __init__(self, initial: dict | None = None, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Настройки")
+        self.setWindowTitle(tr("settings.title"))
         self.setModal(True)
 
         self.sound_down = QLineEdit()
         self.sound_up = QLineEdit()
 
-        btn_down = QPushButton("Выбрать...")
-        btn_up = QPushButton("Выбрать...")
+        btn_down = QPushButton(tr("settings.button.pick"))
+        btn_up = QPushButton(tr("settings.button.pick"))
         btn_down.clicked.connect(lambda: self._pick_file(self.sound_down))
         btn_up.clicked.connect(lambda: self._pick_file(self.sound_up))
 
@@ -37,11 +38,11 @@ class SettingsDialog(QDialog):
         row_up.addWidget(btn_up)
 
         form = QFormLayout()
-        form.addRow("DOWN.wav (глобальный)", row_down)
-        form.addRow("UP.wav (глобальный)", row_up)
+        form.addRow(tr("settings.label.sound_down_global"), row_down)
+        form.addRow(tr("settings.label.sound_up_global"), row_up)
 
-        btn_ok = QPushButton("Сохранить")
-        btn_cancel = QPushButton("Отмена")
+        btn_ok = QPushButton(tr("settings.button.save"))
+        btn_cancel = QPushButton(tr("settings.button.cancel"))
         btn_ok.clicked.connect(self._on_ok)
         btn_cancel.clicked.connect(self.reject)
 
@@ -60,14 +61,17 @@ class SettingsDialog(QDialog):
             self.sound_up.setText(str(initial.get("sound_up_path", "")) or "")
 
     def _pick_file(self, target: QLineEdit) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Выбор WAV", "", "WAV Files (*.wav)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("settings.file_dialog_title"), "", tr("dialog.wav_filter"))
         if path:
             target.setText(path)
 
     def _on_ok(self) -> None:
-        for label, path in (("DOWN.wav", self.sound_down.text()), ("UP.wav", self.sound_up.text())):
+        for label, path in (
+            (tr("settings.sound_down_label"), self.sound_down.text()),
+            (tr("settings.sound_up_label"), self.sound_up.text()),
+        ):
             if path and not Path(path).exists():
-                QMessageBox.critical(self, "Ошибка", f"{label}: файл не найден.")
+                QMessageBox.critical(self, tr("settings.error_title"), tr("settings.error_missing_file", label=label))
                 return
         self.accept()
 

@@ -3,12 +3,13 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMainWindow, QMessageBox
 
+from klimozawr.ui.strings import tr
 
 class BaseMainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._allow_close = False
-        self.setWindowTitle("Климозавр")
+        self.setWindowTitle(tr("app.title"))
         self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
     def allow_close(self, yes: bool) -> None:
@@ -19,7 +20,11 @@ class BaseMainWindow(QMainWindow):
             event.accept()
             return
         event.ignore()
-        QMessageBox.information(self, "Выход", "Закрытие запрещено. Выход только через меню: Файл → Выход")
+        QMessageBox.information(
+            self,
+            tr("app.close_forbidden_title"),
+            tr("app.close_forbidden_message"),
+        )
 
     def showEvent(self, event) -> None:
         super().showEvent(event)

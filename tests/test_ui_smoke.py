@@ -14,6 +14,7 @@ from klimozawr.ui import app_controller as app_controller_module
 from klimozawr.ui.app_controller import AppController
 from klimozawr.ui.windows.admin_main import AdminMainWindow
 from klimozawr.ui.windows.user_main import UserMainWindow
+from klimozawr.ui.widgets.device_cards import DeviceCardWidget
 
 
 class DummySoundManager:
@@ -105,3 +106,19 @@ def test_user_window_smoke(qtbot):
     qtbot.addWidget(win)
     win.show()
     qtbot.waitExposed(win)
+
+
+def test_device_card_smoke(qtbot):
+    card = DeviceCardWidget(device_id=1)
+    qtbot.addWidget(card)
+    card.set_snapshot({
+        "device_id": 1,
+        "ip": "10.0.0.12",
+        "name": "очень-длинное-имя-хоста-для-проверки-обрезания",
+        "status": "GREEN",
+        "loss_pct": 0,
+        "rtt_last_ms": 12,
+        "unstable": False,
+    })
+    card.show()
+    qtbot.waitExposed(card)

@@ -28,6 +28,7 @@ from klimozawr.ui.dialogs.settings_dialog import SettingsDialog
 from klimozawr.ui.dialogs.traceroute_dialog import TracerouteDialog
 from klimozawr.ui.windows.user_main import UserMainWindow
 from klimozawr.ui.windows.admin_main import AdminMainWindow
+from klimozawr.ui.strings import role_display, status_display, tr
 
 logger = logging.getLogger("klimozawr.controller")
 
@@ -146,7 +147,7 @@ class AppController(QObject):
                 self._show_user()
         except Exception as e:
             logger.exception("login flow failed")
-            QMessageBox.critical(None, "Ошибка", f"Не удалось открыть окно: {e}")
+            QMessageBox.critical(None, tr("dialog.window_open_error_title"), tr("dialog.window_open_error_message", error=e))
 
     def _show_user(self) -> None:
         self._close_windows()
@@ -194,41 +195,34 @@ class AppController(QObject):
                     getattr(self, "alerts_changed", None)):
             if sig is None:
                 continue
-            try:
-                sig.disconnect()
-            except (TypeError, RuntimeError):
-                # уже не было подключений или объект-реципиент уничтожен
-                pass
+            self._safe_disconnect(self, sig)
+
+    @staticmethod
+    def _safe_disconnect(owner: QObject, signal) -> None:
+        try:
+            if owner.receivers(signal) > 0:
+                signal.disconnect()
+        except (TypeError, RuntimeError):
+            # уже не было подключений или объект-реципиент уничтожен
+            pass
 
     def _wire_common_window(self, win) -> None:
         # меню
         if hasattr(win, "action_logout"):
-            try:
-                win.action_logout.triggered.disconnect()
-            except Exception:
-                pass
+            self._safe_disconnect(win.action_logout, win.action_logout.triggered)
             win.action_logout.setEnabled(True)
             win.action_logout.triggered.connect(self.logout)
 
         if hasattr(win, "action_exit"):
-            try:
-                win.action_exit.triggered.disconnect()
-            except Exception:
-                pass
+            self._safe_disconnect(win.action_exit, win.action_exit.triggered)
             win.action_exit.setEnabled(True)
             win.action_exit.triggered.connect(self.exit_app)
         if hasattr(win, "action_export_logs"):
-            try:
-                win.action_export_logs.triggered.disconnect()
-            except Exception:
-                pass
+            self._safe_disconnect(win.action_export_logs, win.action_export_logs.triggered)
             win.action_export_logs.setEnabled(True)
             win.action_export_logs.triggered.connect(self.export_all_logs)
         if hasattr(win, "action_settings"):
-            try:
-                win.action_settings.triggered.disconnect()
-            except Exception:
-                pass
+            self._safe_disconnect(win.action_settings, win.action_settings.triggered)
             win.action_settings.setEnabled(True)
             win.action_settings.triggered.connect(self.open_settings)
 
@@ -257,17 +251,14 @@ class AppController(QObject):
     def _wire_admin_window(self, win: AdminMainWindow) -> None:
         # --- inject Refresh button into admin UI (without touching admin_main.py) ---
         if not hasattr(win, "btn_refresh"):
-            win.btn_refresh = QPushButton("Обновить")
+            win.btn_refresh = QPushButton(tr("admin.button.refresh"))
             host = getattr(win, "btn_dev_export", None)  # рядом с экспортом устройств
             parent = host.parentWidget() if host is not None else None
             lay = parent.layout() if parent is not None else None
             if lay is not None:
                 lay.addWidget(win.btn_refresh)
 
-        try:
-            win.btn_refresh.clicked.disconnect()
-        except Exception:
-            pass
+        self._safe_disconnect(win.btn_refresh, win.btn_refresh.clicked)
         win.btn_refresh.clicked.connect(self.admin_refresh)
         win.btn_dev_add.clicked.connect(self.admin_add_device)
         win.btn_dev_edit.clicked.connect(self.admin_edit_device)
@@ -404,7 +395,13 @@ class AppController(QObject):
 
         self._append_raw_log(
             tr.device_id,
-            f"{tr.ts_utc.strftime('%H:%M:%S')} status={effective_status} loss={tr.loss_pct}% rtt={tr.rtt_last_ms or '—'}",
+            tr(
+                "raw.status_line",
+                time=tr.ts_utc.strftime("%H:%M:%S"),
+                status=status_display(effective_status),
+                loss=tr.loss_pct,
+                rtt=tr.rtt_last_ms or tr("placeholder.na"),
+            ),
         )
 
         # minute aggregation (simple in-app, best-effort)
@@ -437,11 +434,19 @@ class AppController(QObject):
         if level == "YELLOW":
             started = (st.yellow_start_utc or st.first_seen_utc).isoformat()
             notify_after = int(snap.get("yellow_notify_after_secs", 30))
-            msg = f"YELLOW: 100% потерь ≥ {notify_after} сек"
+            msg = tr(
+                "alerts.message.yellow",
+                level=status_display(level),
+                seconds=notify_after,
+            )
         else:
             started = (st.red_start_utc or st.first_seen_utc).isoformat()
             to_red = int(snap.get("yellow_to_red_secs", 120))
-            msg = f"RED: недоступно > {to_red} сек"
+            msg = tr(
+                "alerts.message.red",
+                level=status_display(level),
+                seconds=to_red,
+            )
 
         alert_id = self.alerts.fire_or_update(
             device_id=device_id,
@@ -567,8 +572,8 @@ class AppController(QObject):
         last_tick = snap.get("last_tick_utc")
         rtt = snap.get("rtt_last_ms")
         loss = snap.get("loss_pct")
-        rtt_txt = "—" if rtt is None else f"{int(rtt)} ms"
-        loss_txt = "—" if loss is None else f"{int(loss)}%"
+        rtt_txt = tr("placeholder.na") if rtt is None else f"{int(rtt)} {tr('unit.ms')}"
+        loss_txt = tr("placeholder.na") if loss is None else f"{int(loss)}%"
         last_txt = win.details.format_timestamp(last_tick)
         elapsed_txt = self._format_elapsed(device_id, status)
 
@@ -589,7 +594,7 @@ class AppController(QObject):
     def _format_elapsed(self, device_id: int, status: str) -> str:
         st = self._engine.get_state(device_id)
         if not st:
-            return "—"
+            return tr("placeholder.na")
         base: datetime | None
         if status == "GREEN":
             base = st.last_ok_utc or st.first_seen_utc
@@ -598,21 +603,21 @@ class AppController(QObject):
         elif status == "RED":
             base = st.red_start_utc or st.first_seen_utc
         else:
-            return "—"
+            return tr("placeholder.na")
         if not base:
-            return "—"
+            return tr("placeholder.na")
         delta = datetime.now(timezone.utc) - base
         secs = int(delta.total_seconds())
         mins, sec = divmod(secs, 60)
         hrs, min_ = divmod(mins, 60)
         days, hr = divmod(hrs, 24)
         if days > 0:
-            return f"{days}д {hr}ч {min_}м"
+            return f"{days}{tr('unit.day_short')} {hr}{tr('unit.hour_short')} {min_}{tr('unit.minute_short')}"
         if hrs > 0:
-            return f"{hr}ч {min_}м {sec}с"
+            return f"{hr}{tr('unit.hour_short')} {min_}{tr('unit.minute_short')} {sec}{tr('unit.second_short')}"
         if mins > 0:
-            return f"{min_}м {sec}с"
-        return f"{sec}с"
+            return f"{min_}{tr('unit.minute_short')} {sec}{tr('unit.second_short')}"
+        return f"{sec}{tr('unit.second_short')}"
 
     def _append_raw_log(self, device_id: int, line: str) -> None:
         buf = self._raw_logs.setdefault(int(device_id), [])
@@ -657,12 +662,12 @@ class AppController(QObject):
             except Exception as exc:
                 output = f"{type(exc).__name__}: {exc}"
 
-            self._append_raw_log(did, f"traceroute {ip} ->")
+            self._append_raw_log(did, tr("raw.traceroute_start", ip=ip))
             for line in output.splitlines()[:20]:
                 self._append_raw_log(did, line)
 
             def _show() -> None:
-                title = f"Traceroute {name or ip}"
+                title = tr("traceroute.title", target=name or ip)
                 dlg = TracerouteDialog(title=title, output=output, parent=self._admin_win or self._user_win)
                 dlg.exec()
                 self._update_details_panel(did)
@@ -679,26 +684,40 @@ class AppController(QObject):
         label = snap.get("name") or snap.get("ip") or f"device_{did}"
         default = self.paths.exports_dir / f"{label}_logs.csv"
         path, _ = QFileDialog.getSaveFileName(
-            self._admin_win or self._user_win, "Экспорт логов (выбранный)", str(default), "CSV Files (*.csv)"
+            self._admin_win or self._user_win,
+            tr("dialog.export_selected_title"),
+            str(default),
+            tr("dialog.export_logs_filter"),
         )
         if not path:
             return
         logger.info("UI: export logs selected device=%s path=%s", did, path)
         since = datetime.now(timezone.utc) - timedelta(hours=24)
         self.telemetry.export_raw_csv(Path(path), device_id=int(did), since_utc=since)
-        QMessageBox.information(self._admin_win or self._user_win, "Экспорт", "Логи экспортированы.")
+        QMessageBox.information(
+            self._admin_win or self._user_win,
+            tr("dialog.export_completed_title"),
+            tr("dialog.export_completed_message"),
+        )
 
     def export_all_logs(self) -> None:
-        default = self.paths.exports_dir / "all_logs.csv"
+        default = self.paths.exports_dir / tr("dialog.export_all_logs_filename")
         path, _ = QFileDialog.getSaveFileName(
-            self._admin_win or self._user_win, "Экспорт логов (общая)", str(default), "CSV Files (*.csv)"
+            self._admin_win or self._user_win,
+            tr("dialog.export_all_title"),
+            str(default),
+            tr("dialog.export_logs_filter"),
         )
         if not path:
             return
         logger.info("UI: export logs all path=%s", path)
         since = datetime.now(timezone.utc) - timedelta(hours=24)
         self.telemetry.export_raw_csv(Path(path), device_id=None, since_utc=since)
-        QMessageBox.information(self._admin_win or self._user_win, "Экспорт", "Логи экспортированы.")
+        QMessageBox.information(
+            self._admin_win or self._user_win,
+            tr("dialog.export_completed_title"),
+            tr("dialog.export_completed_message"),
+        )
 
     def open_settings(self) -> None:
         initial = {
@@ -716,7 +735,11 @@ class AppController(QObject):
         self._global_sounds["down"] = down
         self._global_sounds["up"] = up
         logger.info("UI: settings updated global sounds down=%s up=%s", down, up)
-        QMessageBox.information(self._admin_win, "Настройки", "Глобальные звуки сохранены.")
+        QMessageBox.information(
+            self._admin_win,
+            tr("dialog.settings_saved_title"),
+            tr("dialog.settings_saved_message"),
+        )
 
     def _prepare_device_payload(self, payload: dict) -> dict:
         icon = self._save_asset(payload.get("icon_path", ""), "icons")
@@ -764,13 +787,19 @@ class AppController(QObject):
 
         self._admin_win.devices_list.clear()
         for d in self.devices.list_devices():
-            it = QListWidgetItem(f"{d.ip}  |  {d.name}")
+            it = QListWidgetItem(tr("admin.devices_list_item", ip=d.ip, name=d.name))
             it.setData(Qt.UserRole, int(d.id))
             self._admin_win.devices_list.addItem(it)
 
         self._admin_win.users_list.clear()
         for u in self.users.list_users():
-            it = QListWidgetItem(f"{u['username']}  ({u['role']})")
+            it = QListWidgetItem(
+                tr(
+                    "admin.users_list_item",
+                    username=u["username"],
+                    role=role_display(u["role"]),
+                )
+            )
             it.setData(Qt.UserRole, str(u["username"]))
             self._admin_win.users_list.addItem(it)
 
@@ -790,7 +819,11 @@ class AppController(QObject):
             logger.info("UI: DeviceEditorDialog result=%s", res)
 
             if res != QDialog.Accepted:
-                QMessageBox.information(self._admin_win, "Устройства", "Отменено (диалог вернул Cancel).")
+                QMessageBox.information(
+                    self._admin_win,
+                    tr("dialog.device_cancelled_title"),
+                    tr("dialog.device_cancelled_message"),
+                )
                 return
 
             payload = self._prepare_device_payload(dlg.payload())
@@ -803,10 +836,14 @@ class AppController(QObject):
             self._refresh_admin_lists()
             self._refresh_cards_everywhere()
 
-            QMessageBox.information(self._admin_win, "Готово", f"Устройство сохранено ({action}).")
+            QMessageBox.information(
+                self._admin_win,
+                tr("dialog.device_saved_title"),
+                tr("dialog.device_saved_message", action=action),
+            )
         except Exception as e:
             logger.exception("admin_add_device failed")
-            QMessageBox.critical(self._admin_win, "Ошибка", f"{type(e).__name__}: {e}")
+            QMessageBox.critical(self._admin_win, tr("dialog.window_open_error_title"), f"{type(e).__name__}: {e}")
 
     def admin_edit_device(self) -> None:
         if not self._admin_win:
@@ -853,25 +890,44 @@ class AppController(QObject):
     def admin_export_devices_csv(self) -> None:
         if not self._admin_win:
             return
-        path, _ = QFileDialog.getSaveFileName(self._admin_win, "Export devices", "devices.csv", "CSV (*.csv)")
+        path, _ = QFileDialog.getSaveFileName(
+            self._admin_win,
+            tr("dialog.export_devices_title"),
+            tr("dialog.export_devices_filename"),
+            tr("dialog.csv_filter"),
+        )
         if not path:
             return
         from pathlib import Path
         self.devices.export_devices_csv(Path(path))
-        QMessageBox.information(self._admin_win, "Export", "Export completed.")
+        QMessageBox.information(
+            self._admin_win,
+            tr("dialog.export_devices_title"),
+            tr("dialog.export_devices_message"),
+        )
 
     def admin_import_devices_csv(self) -> None:
         if not self._admin_win:
             return
-        path, _ = QFileDialog.getOpenFileName(self._admin_win, "Import devices", "", "CSV (*.csv)")
+        path, _ = QFileDialog.getOpenFileName(
+            self._admin_win,
+            tr("dialog.import_devices_title"),
+            "",
+            tr("dialog.csv_filter"),
+        )
         if not path:
             return
         from pathlib import Path
         rep = self.devices.import_devices_csv(Path(path), max_devices=20)
-        msg = f"added={rep.added}, updated={rep.updated}, skipped={rep.skipped}"
+        msg = tr(
+            "dialog.import_report_summary",
+            added=rep.added,
+            updated=rep.updated,
+            skipped=rep.skipped,
+        )
         if rep.reasons:
-            msg += "\n\n" + "\n".join(rep.reasons[:30])
-        QMessageBox.information(self._admin_win, "Import report", msg)
+            msg += "\n\n" + tr("dialog.import_report_reasons_header") + "\n" + "\n".join(rep.reasons[:30])
+        QMessageBox.information(self._admin_win, tr("dialog.import_report_title"), msg)
 
         self._reload_devices()
         self._refresh_admin_lists()
@@ -898,10 +954,14 @@ class AppController(QObject):
             uid = self.users.create_user(username=p.username, password=p.password, role=p.role)
             logger.info("DB: user created id=%s username=%s role=%s", uid, p.username, p.role)
             self._refresh_admin_lists()
-            QMessageBox.information(self._admin_win, "Готово", "Пользователь создан.")
+            QMessageBox.information(
+                self._admin_win,
+                tr("dialog.user_created_title"),
+                tr("dialog.user_created_message"),
+            )
         except Exception as e:
             logger.exception("admin_create_user failed")
-            QMessageBox.critical(self._admin_win, "Ошибка", f"{type(e).__name__}: {e}")
+            QMessageBox.critical(self._admin_win, tr("dialog.window_open_error_title"), f"{type(e).__name__}: {e}")
 
     def admin_delete_user(self) -> None:
         if not self._admin_win:
@@ -913,7 +973,11 @@ class AppController(QObject):
         uid = int(it.data(Qt.UserRole))
         # avoid deleting yourself
         if self.session and uid == self.session.user_id:
-            QMessageBox.warning(self._admin_win, "Users", "You cannot delete your own account while logged in.")
+            QMessageBox.warning(
+                self._admin_win,
+                tr("dialog.user_delete_self_title"),
+                tr("dialog.user_delete_self_message"),
+            )
             return
         self.users.delete_user(uid)
         self._refresh_admin_lists()
@@ -931,11 +995,15 @@ class AppController(QObject):
 
         item = self._admin_win.users_list.currentItem()
         if not item:
-            QMessageBox.warning(self._admin_win, "Пользователи", "Выбери пользователя в списке.")
+            QMessageBox.warning(
+                self._admin_win,
+                tr("dialog.user_select_title"),
+                tr("dialog.user_select_message"),
+            )
             return
 
         uid = int(item.data(Qt.UserRole))
-        username = item.text().split("  (", 1)[0].strip()
+        username = item.text().split("(", 1)[0].strip()
 
         dlg = SetPasswordDialog(username=username, parent=self._admin_win)
         if dlg.exec() != QDialog.Accepted:
@@ -944,10 +1012,14 @@ class AppController(QObject):
         try:
             self.users.set_password(user_id=uid, new_password=dlg.password())
             logger.info("DB: password changed user_id=%s", uid)
-            QMessageBox.information(self._admin_win, "Готово", "Пароль изменён.")
+            QMessageBox.information(
+                self._admin_win,
+                tr("dialog.user_password_changed_title"),
+                tr("dialog.user_password_changed_message"),
+            )
         except Exception as e:
             logger.exception("admin_set_user_password failed")
-            QMessageBox.critical(self._admin_win, "Ошибка", f"{type(e).__name__}: {e}")
+            QMessageBox.critical(self._admin_win, tr("dialog.window_open_error_title"), f"{type(e).__name__}: {e}")
 
     def admin_toggle_user_role(self) -> None:
         if not self._admin_win:
