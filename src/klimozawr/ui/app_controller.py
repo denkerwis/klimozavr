@@ -181,11 +181,17 @@ class AppController(QObject):
         self._disconnect_ui_signals()
 
         if self._admin_win:
-            self._admin_win.close()
+            self._dispose_window(self._admin_win)
             self._admin_win = None
         if self._user_win:
-            self._user_win.close()
+            self._dispose_window(self._user_win)
             self._user_win = None
+
+    def _dispose_window(self, win, *, hide: bool = True) -> None:
+        if hide:
+            win.hide()
+        win.request_programmatic_close()
+        win.deleteLater()
 
     def _disconnect_ui_signals(self) -> None:
         # Qt: если не отключать, сигналы будут стрелять в мёртвые окна после логаута
@@ -277,11 +283,13 @@ class AppController(QObject):
         self._show_login()
 
     def exit_app(self) -> None:
-        # allow close and quit
+        self._disconnect_ui_signals()
         if self._user_win:
-            self._user_win.allow_close(True)
+            self._dispose_window(self._user_win, hide=False)
+            self._user_win = None
         if self._admin_win:
-            self._admin_win.allow_close(True)
+            self._dispose_window(self._admin_win, hide=False)
+            self._admin_win = None
         from PySide6.QtWidgets import QApplication
         QApplication.quit()
 
