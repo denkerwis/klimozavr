@@ -235,27 +235,39 @@ class DeviceCardsView(QWidget):
         self._order: List[int] = []
 
         self._wrapper = QWidget()
+        if self._fit_viewport:
+            self._wrapper.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         wrap_h = QHBoxLayout()
         wrap_h.setContentsMargins(0, 0, 0, 0)
         wrap_h.setSpacing(0)
-        wrap_h.addStretch(1)
 
         self._grid_host = QWidget()
         self._grid = QGridLayout()
         self._grid.setContentsMargins(self._margins, self._margins, self._margins, self._margins)
         self._grid.setHorizontalSpacing(self._spacing)
         self._grid.setVerticalSpacing(self._spacing)
+        if self._fit_viewport:
+            self._grid.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self._grid_host.setLayout(self._grid)
+        if self._fit_viewport:
+            self._grid_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        align = Qt.AlignCenter if self._fit_viewport else Qt.AlignTop
+        if self._fit_viewport:
+            wrap_h.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        else:
+            wrap_h.addStretch(1)
+        align = Qt.AlignLeft | Qt.AlignTop if self._fit_viewport else Qt.AlignTop
         wrap_h.addWidget(self._grid_host, 0, align)
-        wrap_h.addStretch(1)
+        if not self._fit_viewport:
+            wrap_h.addStretch(1)
         self._wrapper.setLayout(wrap_h)
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QScrollArea.NoFrame)
         self._scroll.setWidget(self._wrapper)
+        if self._fit_viewport:
+            self._scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         if self._fit_viewport:
             self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
