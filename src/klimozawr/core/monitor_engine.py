@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from klimozawr.core.icmp import IcmpClient
 from klimozawr.core.models import Device, DeviceRuntimeState, TickResult
-from klimozawr.core.status import derive_tick_metrics, compute_status
+from klimozawr.core.status import derive_tick_metrics, compute_status, should_promote_to_red
 from klimozawr.core.alerts import should_fire_yellow, should_fire_red, AlertDecision
 
 logger = logging.getLogger("klimozawr.engine")
@@ -162,6 +162,8 @@ class MonitorEngine:
                     if prev_status == "GREEN" or prev_status is None:
                         st.yellow_acked = False
                         st.last_yellow_alert_utc = None
+                if should_promote_to_red(ts_utc, st.yellow_start_utc, d.yellow_to_red_secs):
+                    status = "RED"
             elif status == "RED":
                 if prev_status != "RED":
                     st.red_start_utc = st.red_start_utc or ts_utc
@@ -171,6 +173,15 @@ class MonitorEngine:
 
             st.current_status = status
             st.current_unstable = unstable
+            if prev_status != status:
+                logger.info(
+                    "status transition device=%s %s->%s yellow_start=%s red_start=%s",
+                    d.id,
+                    prev_status,
+                    status,
+                    st.yellow_start_utc.isoformat() if st.yellow_start_utc else None,
+                    st.red_start_utc.isoformat() if st.red_start_utc else None,
+                )
 
             # alert decisions
             yellow_dec = should_fire_yellow(

@@ -1,6 +1,11 @@
 from datetime import datetime, timezone, timedelta
 
-from klimozawr.core.status import compute_loss_pct, compute_status, derive_tick_metrics
+from klimozawr.core.status import (
+    compute_loss_pct,
+    compute_status,
+    derive_tick_metrics,
+    should_promote_to_red,
+)
 
 
 def test_loss_pct():
@@ -36,3 +41,14 @@ def test_status_rules():
 
     # red after threshold
     assert compute_status(now, False, now - timedelta(seconds=121), first, 120) == "RED"
+
+
+def test_promote_to_red():
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(seconds=119)
+    assert should_promote_to_red(now, start, 120) is False
+
+    now2 = now + timedelta(seconds=2)
+    assert should_promote_to_red(now2, start, 120) is True
+
+    assert should_promote_to_red(now2, None, 120) is False

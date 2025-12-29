@@ -38,6 +38,8 @@ class AppController(QObject):
     alerts_changed = Signal()
     alert_fired = Signal(dict)  # payload for AlertsPanel
     alert_cleared = Signal(int)  # alert_id
+    tick_received = Signal(object)
+    alert_received = Signal(int, str)
 
     def _refresh_cards_everywhere(self) -> None:
         snaps = self._snapshots_list()
@@ -55,81 +57,8 @@ class AppController(QObject):
         except Exception:
             logger.exception("admin_refresh failed")
 
-    def _maybe_fire_alerts(self, tr: TickResult) -> None:
-        # стейт движка нужен для started_at (yellow_start/red_start)
-        st = self._engine.get_state(tr.device_id)
-        if not st:
-            return
-
-        now = tr.ts_utc
-        status = str(getattr(st, "current_status", tr.status)).upper()
-        did = int(tr.device_id)
-
-        # RED у нас тайм-зависимый (в state), а не всегда приходит как tr.status
-        if status != "GREEN" and getattr(st, "red_start_utc", None):
-            status = "RED"
-
-        # при GREEN закрываем эпизоды и забываем
-        if status == "GREEN":
-            self._alert_book.pop((did, "YELLOW"), None)
-            self._alert_book.pop((did, "RED"), None)
-            return
-
-        # найдём настройки устройства (через снапшот/репо)
-        dev = next((d for d in self.devices.list_devices() if int(d.id) == did), None)
-        if not dev:
-            return
-
-        # ???? TickResult ?? ?????????? RED, ??????? RED ?? ??????? ? YELLOW
-        if status == "YELLOW":
-            started = getattr(st, "yellow_start_utc", None) or now
-            y2r = int(getattr(dev, "yellow_to_red_secs", 120) or 120)
-            try:
-                if (now - started).total_seconds() >= y2r:
-                    status = "RED"
-            except Exception:
-                pass
-
-
-        # YELLOW
-        if status == "YELLOW":
-            started = st.yellow_start_utc or now
-            key = (did, "YELLOW")
-            rec = self._alert_book.get(key)
-
-            notify_after = int(getattr(dev, "yellow_notify_after_secs", 30) or 30)
-            if (rec is None) or (rec.get("started") != started):
-                rec = {"started": started, "acked": False, "next": started + timedelta(seconds=notify_after)}
-                self._alert_book[key] = rec
-
-            if (not rec["acked"]) and (now >= rec["next"]):
-                self._on_alert_from_engine(did, "YELLOW")
-                rec["next"] = now + timedelta(seconds=120)  # повтор каждые 2 минуты
-            return
-
-        # RED
-        if status == "RED":
-            # RED убивает YELLOW-эпизод
-            self._alert_book.pop((did, "YELLOW"), None)
-
-            started = st.red_start_utc or now
-            key = (did, "RED")
-            rec = self._alert_book.get(key)
-
-            if (rec is None) or (rec.get("started") != started):
-                rec = {"started": started, "acked": False, "next": now}  # сразу
-                self._alert_book[key] = rec
-
-            if (not rec["acked"]) and (now >= rec["next"]):
-                self._on_alert_from_engine(did, "RED")
-                rec["next"] = now + timedelta(seconds=300)  # повтор каждые 5 минут
-            return
-
     def __init__(self, db: SQLiteDatabase, paths: AppPaths) -> None:
         super().__init__()
-        # book: (device_id, LEVEL) -> {started, acked, next}
-        self._alert_book: dict[tuple[int, str], dict] = {}
-        self._alert_book: dict[tuple[int, str], dict] = {}
         self.db = db
         self.paths = paths
 
@@ -142,8 +71,8 @@ class AppController(QObject):
         self._selected_device_id: int | None = None
 
         self._engine = MonitorEngine(max_workers=8)
-        self._engine.on_tick = self._on_tick_from_engine
-        self._engine.on_alert = self._on_alert_from_engine
+        self._engine.on_tick = self._enqueue_tick
+        self._engine.on_alert = self._enqueue_alert
 
         yellow_wav = resource_path("resources/sounds/yellow.wav")
         red_wav = resource_path("resources/sounds/red.wav")
@@ -151,6 +80,7 @@ class AppController(QObject):
 
         self._user_win: UserMainWindow | None = None
         self._admin_win: AdminMainWindow | None = None
+        self._sound_book: dict[tuple[int, str], str] = {}
 
         # snapshots for UI cards
         self._snapshots: dict[int, dict] = {}
@@ -164,6 +94,8 @@ class AppController(QObject):
         self._rotation_timer = QTimer()
         self._rotation_timer.setInterval(60 * 60 * 1000)
         self._rotation_timer.timeout.connect(self._maybe_rotate)
+        self.tick_received.connect(self._on_tick_from_engine)
+        self.alert_received.connect(self._on_alert_from_engine)
 
     def start(self) -> None:
         # first-run admin
@@ -374,6 +306,12 @@ class AppController(QObject):
         return [self._snapshots[k] for k in sorted(self._snapshots.keys())]
 
     # --- engine callbacks ---
+    def _enqueue_tick(self, tr: TickResult) -> None:
+        self.tick_received.emit(tr)
+
+    def _enqueue_alert(self, device_id: int, level: str) -> None:
+        self.alert_received.emit(int(device_id), str(level).upper())
+
     def _on_tick_from_engine(self, tr: TickResult) -> None:
         # store raw tick
         self.telemetry.insert_tick(tr)
@@ -381,7 +319,7 @@ class AppController(QObject):
         st = self._engine.get_state(tr.device_id)
 
         # --- status for UI (RED is time-based in state, not always in tr.status) ---
-        effective_status = str(tr.status).upper()
+        effective_status = str(getattr(st, "current_status", tr.status)).upper()
 
         # if device has crossed red threshold in engine state, show RED in UI
         if st and effective_status != "GREEN" and getattr(st, "red_start_utc", None):
@@ -404,6 +342,12 @@ class AppController(QObject):
             elif effective_status == "YELLOW":
                 self.alerts.resolve_level(tr.device_id, "RED")
 
+            if effective_status == "GREEN":
+                self._sound_book.pop((int(tr.device_id), "YELLOW"), None)
+                self._sound_book.pop((int(tr.device_id), "RED"), None)
+            elif effective_status == "YELLOW":
+                self._sound_book.pop((int(tr.device_id), "RED"), None)
+
         # update snapshot for UI
         if tr.device_id in self._snapshots:
             s = self._snapshots[tr.device_id]
@@ -414,9 +358,6 @@ class AppController(QObject):
 
         # minute aggregation (simple in-app, best-effort)
         self._aggregate_minute(tr)
-
-        # IMPORTANT: alerts logic might rely on tr.status only. We'll fix it below.
-        self._maybe_fire_alerts(tr)
 
         self.device_updated.emit(tr.device_id)
 
@@ -429,19 +370,36 @@ class AppController(QObject):
         if not st:
             return
 
+        snap = self._snapshots.get(int(device_id))
+        if snap is None:
+            dev = next((d for d in self.devices.list_devices() if int(d.id) == int(device_id)), None)
+            snap = {
+                "yellow_to_red_secs": getattr(dev, "yellow_to_red_secs", 120) if dev else 120,
+                "yellow_notify_after_secs": getattr(dev, "yellow_notify_after_secs", 30) if dev else 30,
+            }
+
         # decide episode start timestamp
         if level == "YELLOW":
             started = (st.yellow_start_utc or st.first_seen_utc).isoformat()
-            msg = f"YELLOW: 100% потерь ≥ {st.yellow_notify_after_secs} сек"
+            notify_after = int(snap.get("yellow_notify_after_secs", 30))
+            msg = f"YELLOW: 100% потерь ≥ {notify_after} сек"
         else:
             started = (st.red_start_utc or st.first_seen_utc).isoformat()
-            msg = f"RED: недоступно > {st.yellow_to_red_secs} сек"
+            to_red = int(snap.get("yellow_to_red_secs", 120))
+            msg = f"RED: недоступно > {to_red} сек"
 
         alert_id = self.alerts.fire_or_update(
             device_id=device_id,
             level=level,
             started_at_utc=started,
             message=msg,
+        )
+        logger.info(
+            "alert fired device=%s level=%s started_at=%s alert_id=%s",
+            device_id,
+            level,
+            started,
+            alert_id,
         )
         self.telemetry.insert_event(
             datetime.now(timezone.utc),
@@ -458,7 +416,11 @@ class AppController(QObject):
             "message": str(msg),
         }
 
-        QTimer.singleShot(0, lambda lvl=level: self._sound.play(lvl))
+        sound_key = (int(device_id), str(level))
+        if self._sound_book.get(sound_key) != started:
+            self._sound_book[sound_key] = started
+            logger.info("sound play device=%s level=%s started_at=%s", device_id, level, started)
+            QTimer.singleShot(0, lambda lvl=level: self._sound.play(lvl))
 
         # ✅ теперь UI получает событие сразу
         self.alert_fired.emit(payload)
@@ -467,11 +429,9 @@ class AppController(QObject):
     def ack_alert(self, alert_id: int, level: str, device_id: int) -> None:
         self.alerts.ack(alert_id)
         self.telemetry.insert_event(datetime.now(timezone.utc), device_id, "alert_ack", f"{level} alert_id={alert_id}")
+        self._engine.ack_device(int(device_id), str(level).upper())
         self.alert_cleared.emit(int(alert_id))
         self.alerts_changed.emit()
-        k = (int(device_id), str(level).upper())
-        if hasattr(self, "_alert_book") and k in self._alert_book:
-            self._alert_book[k]["acked"] = True
 
     # --- selection/details/chart ---
     def _select_device(self, device_id: int) -> None:
@@ -600,17 +560,6 @@ class AppController(QObject):
         dev = next((d for d in self.devices.list_devices() if int(d.id) == did), None)
         if not dev:
             return
-
-        # ???? TickResult ?? ?????????? RED, ??????? RED ?? ??????? ? YELLOW
-        if status == "YELLOW":
-            started = getattr(st, "yellow_start_utc", None) or now
-            y2r = int(getattr(dev, "yellow_to_red_secs", 120) or 120)
-            try:
-                if (now - started).total_seconds() >= y2r:
-                    status = "RED"
-            except Exception:
-                pass
-
 
         dlg = DeviceEditorDialog(dev, parent=self._admin_win)
         if dlg.exec() != dlg.DialogCode.Accepted:
