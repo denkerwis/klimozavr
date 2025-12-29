@@ -5,7 +5,7 @@ from klimozawr.storage.db import SQLiteDatabase
 
 logger = logging.getLogger("klimozawr.migrations")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def apply_migrations(db: SQLiteDatabase) -> None:
@@ -30,6 +30,11 @@ def apply_migrations(db: SQLiteDatabase) -> None:
     if ver < 1:
         _migrate_v1(conn)
         conn.execute("UPDATE schema_meta SET version=? WHERE id=1;", (1,))
+        ver = 1
+
+    if ver < 2:
+        _migrate_v2(conn)
+        conn.execute("UPDATE schema_meta SET version=? WHERE id=1;", (2,))
 
     logger.info("migrations done")
 
@@ -103,5 +108,27 @@ def _migrate_v1(conn) -> None:
           message TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts(device_id, level, acked_at_utc, resolved_at_utc);
+        """
+    )
+
+
+def _migrate_v2(conn) -> None:
+    def _add_column(sql: str) -> None:
+        try:
+            conn.execute(sql)
+        except Exception:
+            logger.exception("failed to apply migration: %s", sql)
+
+    _add_column("ALTER TABLE devices ADD COLUMN icon_path TEXT NOT NULL DEFAULT '';")
+    _add_column("ALTER TABLE devices ADD COLUMN icon_scale INTEGER NOT NULL DEFAULT 100;")
+    _add_column("ALTER TABLE devices ADD COLUMN sound_down_path TEXT NOT NULL DEFAULT '';")
+    _add_column("ALTER TABLE devices ADD COLUMN sound_up_path TEXT NOT NULL DEFAULT '';")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
         """
     )

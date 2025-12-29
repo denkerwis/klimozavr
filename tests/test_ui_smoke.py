@@ -9,6 +9,7 @@ pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 from klimozawr.config import AppPaths
 from klimozawr.storage.db import SQLiteDatabase
 from klimozawr.storage.migrations import apply_migrations
+from klimozawr.storage.repositories import DeviceRepo
 from klimozawr.ui import app_controller as app_controller_module
 from klimozawr.ui.app_controller import AppController
 from klimozawr.ui.windows.admin_main import AdminMainWindow
@@ -20,9 +21,13 @@ class DummySoundManager:
         self.yellow_wav = yellow_wav
         self.red_wav = red_wav
         self.played: list[str] = []
+        self.played_paths: list[str] = []
 
     def play(self, level: str) -> None:
         self.played.append(level)
+
+    def play_path(self, wav_path: str) -> None:
+        self.played_paths.append(wav_path)
 
 
 def _make_paths(tmp_path: Path) -> AppPaths:
@@ -55,9 +60,44 @@ def test_admin_window_smoke(qtbot, tmp_path, monkeypatch):
     qtbot.addWidget(win)
     controller._wire_common_window(win)
     controller._wire_admin_window(win)
+    controller._admin_win = win
     win.show()
 
     qtbot.waitExposed(win)
+
+
+def test_selection_updates_details(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_controller_module, "SoundManager", DummySoundManager)
+
+    paths = _make_paths(tmp_path)
+    db = SQLiteDatabase(paths.db_path)
+    apply_migrations(db)
+
+    controller = AppController(db=db, paths=paths)
+    dr = DeviceRepo(db)
+    _action, did = dr.upsert_device({
+        "ip": "10.0.0.5",
+        "name": "switch",
+        "comment": "",
+        "location": "",
+        "owner": "",
+        "yellow_to_red_secs": 120,
+        "yellow_notify_after_secs": 30,
+        "ping_timeout_ms": 1000,
+    })
+    controller._reload_devices()
+
+    win = AdminMainWindow()
+    qtbot.addWidget(win)
+    controller._admin_win = win
+    controller._wire_common_window(win)
+    controller._wire_admin_window(win)
+    win.cards.set_devices(controller._snapshots_list())
+    win.show()
+    qtbot.waitExposed(win)
+
+    controller._select_device(did)
+    assert "switch" in win.details.host_label.text()
 
 
 def test_user_window_smoke(qtbot):

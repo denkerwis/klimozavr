@@ -4,8 +4,16 @@ from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit,
-    QSpinBox, QPushButton, QHBoxLayout, QMessageBox
+    QDialog,
+    QVBoxLayout,
+    QFormLayout,
+    QLineEdit,
+    QTextEdit,
+    QSpinBox,
+    QPushButton,
+    QHBoxLayout,
+    QMessageBox,
+    QFileDialog,
 )
 
 
@@ -43,6 +51,33 @@ class DeviceEditorDialog(QDialog):
         self.ping_timeout_ms.setSingleStep(100)
         self.ping_timeout_ms.setValue(1000)
 
+        self.icon_path = QLineEdit()
+        self.icon_scale = QSpinBox()
+        self.icon_scale.setRange(50, 200)
+        self.icon_scale.setValue(100)
+
+        self.sound_down_path = QLineEdit()
+        self.sound_up_path = QLineEdit()
+
+        btn_icon = QPushButton("Выбрать...")
+        btn_sound_down = QPushButton("Выбрать...")
+        btn_sound_up = QPushButton("Выбрать...")
+        btn_icon.clicked.connect(lambda: self._pick_file(self.icon_path, "PNG Files (*.png)"))
+        btn_sound_down.clicked.connect(lambda: self._pick_file(self.sound_down_path, "WAV Files (*.wav)"))
+        btn_sound_up.clicked.connect(lambda: self._pick_file(self.sound_up_path, "WAV Files (*.wav)"))
+
+        row_icon = QHBoxLayout()
+        row_icon.addWidget(self.icon_path, 1)
+        row_icon.addWidget(btn_icon)
+
+        row_down = QHBoxLayout()
+        row_down.addWidget(self.sound_down_path, 1)
+        row_down.addWidget(btn_sound_down)
+
+        row_up = QHBoxLayout()
+        row_up.addWidget(self.sound_up_path, 1)
+        row_up.addWidget(btn_sound_up)
+
         form = QFormLayout()
         form.addRow("IP", self.ip)
         form.addRow("Имя", self.name)
@@ -52,6 +87,10 @@ class DeviceEditorDialog(QDialog):
         form.addRow("yellow_to_red_secs", self.yellow_to_red_secs)
         form.addRow("yellow_notify_after_secs", self.yellow_notify_after_secs)
         form.addRow("ping_timeout_ms", self.ping_timeout_ms)
+        form.addRow("Иконка PNG", row_icon)
+        form.addRow("Масштаб иконки (%)", self.icon_scale)
+        form.addRow("Звук DOWN.wav", row_down)
+        form.addRow("Звук UP.wav", row_up)
 
         btn_ok = QPushButton("Готово")
         btn_cancel = QPushButton("Отмена")
@@ -84,6 +123,10 @@ class DeviceEditorDialog(QDialog):
                 "yellow_to_red_secs": getattr(initial, "yellow_to_red_secs", 120),
                 "yellow_notify_after_secs": getattr(initial, "yellow_notify_after_secs", 30),
                 "ping_timeout_ms": getattr(initial, "ping_timeout_ms", 1000),
+                "icon_path": getattr(initial, "icon_path", ""),
+                "icon_scale": getattr(initial, "icon_scale", 100),
+                "sound_down_path": getattr(initial, "sound_down_path", ""),
+                "sound_up_path": getattr(initial, "sound_up_path", ""),
             }
 
 
@@ -97,6 +140,10 @@ class DeviceEditorDialog(QDialog):
         self.yellow_to_red_secs.setValue(int(_get(data.get, "yellow_to_red_secs", 120) or 120))
         self.yellow_notify_after_secs.setValue(int(_get(data.get, "yellow_notify_after_secs", 30) or 30))
         self.ping_timeout_ms.setValue(int(_get(data.get, "ping_timeout_ms", 1000) or 1000))
+        self.icon_path.setText(str(_get(data.get, "icon_path", "")) or "")
+        self.icon_scale.setValue(int(_get(data.get, "icon_scale", 100) or 100))
+        self.sound_down_path.setText(str(_get(data.get, "sound_down_path", "")) or "")
+        self.sound_up_path.setText(str(_get(data.get, "sound_up_path", "")) or "")
 
     def _on_ok(self) -> None:
         ip = self.ip.text().strip()
@@ -104,6 +151,11 @@ class DeviceEditorDialog(QDialog):
             QMessageBox.critical(self, "Ошибка", "IP обязателен.")
             return
         self.accept()
+
+    def _pick_file(self, target: QLineEdit, filter_text: str) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Выбор файла", "", filter_text)
+        if path:
+            target.setText(path)
 
     def payload(self) -> dict:
         return {
@@ -115,4 +167,8 @@ class DeviceEditorDialog(QDialog):
             "yellow_to_red_secs": int(self.yellow_to_red_secs.value()),
             "yellow_notify_after_secs": int(self.yellow_notify_after_secs.value()),
             "ping_timeout_ms": int(self.ping_timeout_ms.value()),
+            "icon_path": self.icon_path.text().strip(),
+            "icon_scale": int(self.icon_scale.value()),
+            "sound_down_path": self.sound_down_path.text().strip(),
+            "sound_up_path": self.sound_up_path.text().strip(),
         }

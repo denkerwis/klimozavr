@@ -18,6 +18,10 @@ class Device:
     yellow_to_red_secs: int
     yellow_notify_after_secs: int
     ping_timeout_ms: int
+    icon_path: str = ""
+    icon_scale: int = 100
+    sound_down_path: str = ""
+    sound_up_path: str = ""
 
 
 @dataclass(frozen=True)

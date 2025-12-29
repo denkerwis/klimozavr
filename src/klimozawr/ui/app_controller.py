@@ -3,6 +3,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import platform
+import shutil
+import subprocess
+import threading
 
 from PySide6.QtCore import QObject, Signal, QTimer
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog, QPushButton
@@ -13,12 +18,14 @@ from klimozawr.core.monitor_engine import MonitorEngine
 from klimozawr.services.rotation import run_daily_rotation, RotationConfig
 from klimozawr.services.sound import SoundManager
 from klimozawr.storage.db import SQLiteDatabase
-from klimozawr.storage.repositories import UserRepo, DeviceRepo, TelemetryRepo, AlertRepo
+from klimozawr.storage.repositories import UserRepo, DeviceRepo, TelemetryRepo, AlertRepo, SettingsRepo
 from klimozawr.ui.resources import resource_path
 from klimozawr.ui.dialogs.create_first_admin import CreateFirstAdminDialog
 from klimozawr.ui.dialogs.login import LoginDialog
 from klimozawr.ui.dialogs.device_editor import DeviceEditorDialog
 from klimozawr.ui.dialogs.user_editor import CreateUserDialog, SetPasswordDialog
+from klimozawr.ui.dialogs.settings_dialog import SettingsDialog
+from klimozawr.ui.dialogs.traceroute_dialog import TracerouteDialog
 from klimozawr.ui.windows.user_main import UserMainWindow
 from klimozawr.ui.windows.admin_main import AdminMainWindow
 
@@ -65,6 +72,7 @@ class AppController(QObject):
         self.devices = DeviceRepo(db)
         self.telemetry = TelemetryRepo(db)
         self.alerts = AlertRepo(db)
+        self.settings = SettingsRepo(db)
 
         self.session: Session | None = None
         self._selected_device_id: int | None = None
@@ -83,6 +91,13 @@ class AppController(QObject):
 
         # snapshots for UI cards
         self._snapshots: dict[int, dict] = {}
+        self._raw_logs: dict[int, list[str]] = {}
+        self._raw_log_limit = 10
+
+        self._global_sounds = {
+            "down": self.settings.get("sound_down_path", ""),
+            "up": self.settings.get("sound_up_path", ""),
+        }
 
         # minute aggregation buffers
         self._minute_bucket: dict[int, dict] = {}
@@ -96,6 +111,10 @@ class AppController(QObject):
         self.tick_received.connect(self._on_tick_from_engine)
         self.alert_received.connect(self._on_alert_from_engine)
 
+        self._chart_timer = QTimer()
+        self._chart_timer.setInterval(10 * 1000)
+        self._chart_timer.timeout.connect(self._refresh_selected_chart)
+
     def start(self) -> None:
         # first-run admin
         if self.users.count_users() == 0:
@@ -108,6 +127,7 @@ class AppController(QObject):
         # start engine (keeps running even after logout)
         self._engine.start()
         self._rotation_timer.start()
+        self._chart_timer.start()
         self._maybe_rotate()
 
         self._show_login()
@@ -197,6 +217,20 @@ class AppController(QObject):
                 pass
             win.action_exit.setEnabled(True)
             win.action_exit.triggered.connect(self.exit_app)
+        if hasattr(win, "action_export_logs"):
+            try:
+                win.action_export_logs.triggered.disconnect()
+            except Exception:
+                pass
+            win.action_export_logs.setEnabled(True)
+            win.action_export_logs.triggered.connect(self.export_all_logs)
+        if hasattr(win, "action_settings"):
+            try:
+                win.action_settings.triggered.disconnect()
+            except Exception:
+                pass
+            win.action_settings.setEnabled(True)
+            win.action_settings.triggered.connect(self.open_settings)
 
         # обновления карточек
         self.device_updated.connect(
@@ -211,6 +245,14 @@ class AppController(QObject):
             win.alerts.ack_requested.connect(self.ack_alert)
             self.alert_fired.connect(win.alerts.add_alert)
             self.alert_cleared.connect(win.alerts.remove_alert)
+        elif hasattr(win, "details"):
+            win.details.period_changed.connect(self._refresh_chart)
+            win.cards.device_selected.connect(self._select_device)
+
+        if hasattr(win, "details"):
+            win.details.traceroute_requested.connect(self.run_traceroute_selected)
+            win.details.export_selected_requested.connect(self.export_selected_logs)
+            win.details.export_all_requested.connect(self.export_all_logs)
 
     def _wire_admin_window(self, win: AdminMainWindow) -> None:
         # --- inject Refresh button into admin UI (without touching admin_main.py) ---
@@ -270,10 +312,15 @@ class AppController(QObject):
                     "yellow_to_red_secs": d.yellow_to_red_secs,
                     "yellow_notify_after_secs": d.yellow_notify_after_secs,
                     "ping_timeout_ms": d.ping_timeout_ms,
+                    "icon_path": d.icon_path,
+                    "icon_scale": d.icon_scale,
+                    "sound_down_path": d.sound_down_path,
+                    "sound_up_path": d.sound_up_path,
                     "status": "YELLOW",
                     "unstable": False,
                     "loss_pct": 100,
                     "rtt_last_ms": None,
+                    "last_tick_utc": None,
                 }
             else:
                 # refresh metadata
@@ -287,6 +334,10 @@ class AppController(QObject):
                     "yellow_to_red_secs": d.yellow_to_red_secs,
                     "yellow_notify_after_secs": d.yellow_notify_after_secs,
                     "ping_timeout_ms": d.ping_timeout_ms,
+                    "icon_path": d.icon_path,
+                    "icon_scale": d.icon_scale,
+                    "sound_down_path": d.sound_down_path,
+                    "sound_up_path": d.sound_up_path,
                 })
 
         # drop removed
@@ -327,6 +378,7 @@ class AppController(QObject):
                 self.telemetry.insert_event(
                     tr.ts_utc, tr.device_id, "status_transition", f"{prev}->{effective_status}"
                 )
+                self._play_status_sound(tr.device_id, effective_status)
 
             # resolve alerts when green
             if effective_status == "GREEN":
@@ -348,6 +400,12 @@ class AppController(QObject):
             s["unstable"] = tr.unstable
             s["loss_pct"] = tr.loss_pct
             s["rtt_last_ms"] = tr.rtt_last_ms
+            s["last_tick_utc"] = tr.ts_utc
+
+        self._append_raw_log(
+            tr.device_id,
+            f"{tr.ts_utc.strftime('%H:%M:%S')} status={effective_status} loss={tr.loss_pct}% rtt={tr.rtt_last_ms or '—'}",
+        )
 
         # minute aggregation (simple in-app, best-effort)
         self._aggregate_minute(tr)
@@ -360,6 +418,7 @@ class AppController(QObject):
             details = getattr(win, "details", None)
             if details and hasattr(details, "current_period_key"):
                 self._refresh_chart(details.current_period_key)
+                self._update_details_panel(tr.device_id)
 
     def _on_alert_from_engine(self, device_id: int, level: str) -> None:
         st = self._engine.get_state(device_id)
@@ -432,6 +491,7 @@ class AppController(QObject):
     # --- selection/details/chart ---
     def _select_device(self, device_id: int) -> None:
         self._selected_device_id = int(device_id)
+        logger.info("UI: device selected id=%s", device_id)
 
         # детали есть только в админ-окне (и в старом user-окне)
         win = self._admin_win or self._user_win
@@ -443,7 +503,7 @@ class AppController(QObject):
 
         snap = self._snapshots.get(int(device_id))
         if snap:
-            win.details.set_device(snap)
+            self._update_details_panel(device_id)
             # можно обновить график текущего периода
             self._refresh_chart(getattr(win.details, "current_period_key", "1h"))
 
@@ -485,7 +545,216 @@ class AppController(QObject):
         if self._admin_win:
             self._admin_win.details.chart.set_data(points)
 
+    def _refresh_selected_chart(self) -> None:
+        did = self._selected_device_id
+        if not did:
+            return
+        win = self._admin_win or self._user_win
+        details = getattr(win, "details", None)
+        if details and hasattr(details, "current_period_key"):
+            self._refresh_chart(details.current_period_key)
+        self._update_details_panel(did)
+
+    def _update_details_panel(self, device_id: int) -> None:
+        win = self._admin_win or self._user_win
+        if not win or not hasattr(win, "details"):
+            return
+        snap = self._snapshots.get(int(device_id))
+        if not snap:
+            win.details.clear()
+            return
+        status = str(snap.get("status", "UNKNOWN")).upper()
+        last_tick = snap.get("last_tick_utc")
+        rtt = snap.get("rtt_last_ms")
+        loss = snap.get("loss_pct")
+        rtt_txt = "—" if rtt is None else f"{int(rtt)} ms"
+        loss_txt = "—" if loss is None else f"{int(loss)}%"
+        last_txt = win.details.format_timestamp(last_tick)
+        elapsed_txt = self._format_elapsed(device_id, status)
+
+        raw_lines = self._raw_logs.get(int(device_id), [])
+        raw_tail = raw_lines[-self._raw_log_limit :]
+
+        win.details.set_device_details(
+            name=str(snap.get("name", "") or ""),
+            ip=str(snap.get("ip", "") or ""),
+            status=status,
+            rtt_ms=rtt_txt,
+            loss_pct=loss_txt,
+            last_seen=last_txt,
+            elapsed=elapsed_txt,
+            raw_lines=raw_tail,
+        )
+
+    def _format_elapsed(self, device_id: int, status: str) -> str:
+        st = self._engine.get_state(device_id)
+        if not st:
+            return "—"
+        base: datetime | None
+        if status == "GREEN":
+            base = st.last_ok_utc or st.first_seen_utc
+        elif status == "YELLOW":
+            base = st.yellow_start_utc or st.first_seen_utc
+        elif status == "RED":
+            base = st.red_start_utc or st.first_seen_utc
+        else:
+            return "—"
+        if not base:
+            return "—"
+        delta = datetime.now(timezone.utc) - base
+        secs = int(delta.total_seconds())
+        mins, sec = divmod(secs, 60)
+        hrs, min_ = divmod(mins, 60)
+        days, hr = divmod(hrs, 24)
+        if days > 0:
+            return f"{days}д {hr}ч {min_}м"
+        if hrs > 0:
+            return f"{hr}ч {min_}м {sec}с"
+        if mins > 0:
+            return f"{min_}м {sec}с"
+        return f"{sec}с"
+
+    def _append_raw_log(self, device_id: int, line: str) -> None:
+        buf = self._raw_logs.setdefault(int(device_id), [])
+        buf.append(str(line))
+        if len(buf) > self._raw_log_limit * 3:
+            del buf[: len(buf) - self._raw_log_limit * 3]
+
+    def _play_status_sound(self, device_id: int, status: str) -> None:
+        snap = self._snapshots.get(int(device_id), {})
+        status = status.upper()
+        if status == "GREEN":
+            path = snap.get("sound_up_path") or self._global_sounds.get("up")
+        elif status in {"YELLOW", "RED", "DOWN"}:
+            path = snap.get("sound_down_path") or self._global_sounds.get("down")
+        else:
+            path = None
+        if path:
+            logger.info("sound play device=%s status=%s path=%s", device_id, status, path)
+            self._sound.play_path(str(path))
+        else:
+            logger.info("sound not configured device=%s status=%s", device_id, status)
+
     # --- admin actions ---
+    def run_traceroute_selected(self) -> None:
+        did = self._selected_device_id
+        if not did:
+            return
+        snap = self._snapshots.get(int(did))
+        if not snap:
+            return
+        ip = str(snap.get("ip", "") or "")
+        name = str(snap.get("name", "") or "")
+        if not ip:
+            return
+        logger.info("UI: traceroute start device_id=%s ip=%s", did, ip)
+
+        def _worker() -> None:
+            cmd = ["tracert", ip] if platform.system().lower() == "windows" else ["traceroute", ip]
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                output = res.stdout.strip() or res.stderr.strip()
+            except Exception as exc:
+                output = f"{type(exc).__name__}: {exc}"
+
+            self._append_raw_log(did, f"traceroute {ip} ->")
+            for line in output.splitlines()[:20]:
+                self._append_raw_log(did, line)
+
+            def _show() -> None:
+                title = f"Traceroute {name or ip}"
+                dlg = TracerouteDialog(title=title, output=output, parent=self._admin_win or self._user_win)
+                dlg.exec()
+                self._update_details_panel(did)
+
+            QTimer.singleShot(0, _show)
+
+        threading.Thread(target=_worker, name="traceroute", daemon=True).start()
+
+    def export_selected_logs(self) -> None:
+        did = self._selected_device_id
+        if not did:
+            return
+        snap = self._snapshots.get(int(did))
+        label = snap.get("name") or snap.get("ip") or f"device_{did}"
+        default = self.paths.exports_dir / f"{label}_logs.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self._admin_win or self._user_win, "Экспорт логов (выбранный)", str(default), "CSV Files (*.csv)"
+        )
+        if not path:
+            return
+        logger.info("UI: export logs selected device=%s path=%s", did, path)
+        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        self.telemetry.export_raw_csv(Path(path), device_id=int(did), since_utc=since)
+        QMessageBox.information(self._admin_win or self._user_win, "Экспорт", "Логи экспортированы.")
+
+    def export_all_logs(self) -> None:
+        default = self.paths.exports_dir / "all_logs.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self._admin_win or self._user_win, "Экспорт логов (общая)", str(default), "CSV Files (*.csv)"
+        )
+        if not path:
+            return
+        logger.info("UI: export logs all path=%s", path)
+        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        self.telemetry.export_raw_csv(Path(path), device_id=None, since_utc=since)
+        QMessageBox.information(self._admin_win or self._user_win, "Экспорт", "Логи экспортированы.")
+
+    def open_settings(self) -> None:
+        initial = {
+            "sound_down_path": self.settings.get("sound_down_path", ""),
+            "sound_up_path": self.settings.get("sound_up_path", ""),
+        }
+        dlg = SettingsDialog(initial=initial, parent=self._admin_win)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        payload = dlg.payload()
+        down = self._save_asset(payload.get("sound_down_path", ""), "sounds")
+        up = self._save_asset(payload.get("sound_up_path", ""), "sounds")
+        self.settings.set("sound_down_path", down)
+        self.settings.set("sound_up_path", up)
+        self._global_sounds["down"] = down
+        self._global_sounds["up"] = up
+        logger.info("UI: settings updated global sounds down=%s up=%s", down, up)
+        QMessageBox.information(self._admin_win, "Настройки", "Глобальные звуки сохранены.")
+
+    def _prepare_device_payload(self, payload: dict) -> dict:
+        icon = self._save_asset(payload.get("icon_path", ""), "icons")
+        down = self._save_asset(payload.get("sound_down_path", ""), "sounds")
+        up = self._save_asset(payload.get("sound_up_path", ""), "sounds")
+        new_payload = dict(payload)
+        new_payload["icon_path"] = icon
+        new_payload["sound_down_path"] = down
+        new_payload["sound_up_path"] = up
+        logger.info(
+            "UI: apply per-host settings icon=%s scale=%s down=%s up=%s",
+            icon,
+            payload.get("icon_scale", 100),
+            down,
+            up,
+        )
+        return new_payload
+
+    def _save_asset(self, path: str, bucket: str) -> str:
+        if not path:
+            return ""
+        src = Path(path)
+        if not src.exists():
+            return ""
+        dest_dir = self.paths.data_dir / "assets" / bucket
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / src.name
+        if dest.exists() and dest.resolve() != src.resolve():
+            stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            dest = dest_dir / f"{src.stem}_{stamp}{src.suffix}"
+        try:
+            if dest.resolve() != src.resolve():
+                shutil.copy2(src, dest)
+            return str(dest)
+        except Exception:
+            logger.exception("failed to store asset %s", src)
+            return str(src)
+
     def _refresh_admin_lists(self) -> None:
         if not self._admin_win:
             return
@@ -524,7 +793,7 @@ class AppController(QObject):
                 QMessageBox.information(self._admin_win, "Устройства", "Отменено (диалог вернул Cancel).")
                 return
 
-            payload = dlg.payload()
+            payload = self._prepare_device_payload(dlg.payload())
             logger.info("UI: device payload=%r", payload)
 
             action, did = self.devices.upsert_device(payload, is_update_event=True)
@@ -561,7 +830,9 @@ class AppController(QObject):
         if dlg.exec() != dlg.DialogCode.Accepted:
             return
 
-        self.devices.upsert_device(dlg.payload(), is_update_event=True)
+        payload = self._prepare_device_payload(dlg.payload())
+        payload["ip"] = dev.ip
+        self.devices.upsert_device(payload, is_update_event=True)
         self._reload_devices()
         self._admin_win.cards.set_devices(self._snapshots_list())
         self._refresh_admin_lists()
