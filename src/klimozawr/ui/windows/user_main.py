@@ -1,23 +1,17 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QMainWindow, QMenuBar, QMenu
+from PySide6.QtWidgets import QMenuBar, QMenu
 from PySide6.QtGui import QAction
 
 from klimozawr.ui.widgets.device_cards import DeviceCardsView
+from klimozawr.ui.windows.base_main import BaseMainWindow
 
 
-class UserMainWindow(QMainWindow):
+class UserMainWindow(BaseMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("klimozawr (User)")
         self.setWindowState(self.windowState())  # no-op, but keeps pattern
-        m = self.menuBar().addMenu("Файл")
-
-        self.action_logout = QAction("Выход", self)
-        self.action_exit = QAction("Закрыть программу", self)
-
-        m.addAction(self.action_logout)
-        m.addAction(self.action_exit)
 
         menubar = QMenuBar()
         menu_file = QMenu("Меню", self)
@@ -33,4 +27,4 @@ class UserMainWindow(QMainWindow):
         self.setCentralWidget(self.cards)
 
     def closeEvent(self, event) -> None:
-        event.ignore()
+        super().closeEvent(event)
