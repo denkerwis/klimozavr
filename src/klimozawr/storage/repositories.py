@@ -190,6 +190,48 @@ class DeviceRepo:
         )
         return ("added", did)
 
+    def update_device_by_id(self, device_id: int, d: dict, *, is_update_event: bool = True) -> None:
+        ip = d["ip"].strip()
+        ipaddress.ip_address(ip)
+
+        conn = self.db.connect()
+        existing = conn.execute("SELECT id FROM devices WHERE ip=?;", (ip,)).fetchone()
+        if existing and int(existing["id"]) != int(device_id):
+            raise ValueError(f"device with ip={ip} already exists")
+
+        now = utc_now_iso()
+        conn.execute(
+            """
+            UPDATE devices SET
+              ip=?, name=?, comment=?, location=?, owner=?,
+              yellow_to_red_secs=?, yellow_notify_after_secs=?, ping_timeout_ms=?,
+              icon_path=?, icon_scale=?, sound_down_path=?, sound_up_path=?,
+              updated_at_utc=?
+            WHERE id=?;
+            """,
+            (
+                ip,
+                d.get("name", ""),
+                d.get("comment", ""),
+                d.get("location", ""),
+                d.get("owner", ""),
+                int(d.get("yellow_to_red_secs", 120)),
+                int(d.get("yellow_notify_after_secs", 30)),
+                int(d.get("ping_timeout_ms", 1000)),
+                d.get("icon_path", ""),
+                int(d.get("icon_scale", 100)),
+                d.get("sound_down_path", ""),
+                d.get("sound_up_path", ""),
+                now,
+                int(device_id),
+            ),
+        )
+        if is_update_event:
+            conn.execute(
+                "INSERT INTO events(ts_utc, device_id, kind, detail) VALUES (?,?,?,?);",
+                (now, int(device_id), "device_updated", f"device updated by id={device_id} ip={ip}"),
+            )
+
     def delete_device(self, device_id: int) -> None:
         conn = self.db.connect()
         conn.execute(

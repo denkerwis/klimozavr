@@ -405,7 +405,7 @@ class AppController(QObject):
             tick.device_id,
             _t(
                 "raw.status_line",
-                time=tick.ts_utc.strftime("%H:%M:%S"),
+                time=self._format_time_local(tick.ts_utc),
                 status=status_display(effective_status),
                 loss=tick.loss_pct,
                 rtt=tick.rtt_last_ms or _t("placeholder.na"),
@@ -546,11 +546,13 @@ class AppController(QObject):
             rows = self.telemetry.select_agg_range(did, since)
             for r in rows:
                 ts = datetime.fromisoformat(r["minute_ts_utc"])
+                ts = self._to_local(ts)
                 points.append((ts, r.get("avg_rtt_ms"), r.get("loss_avg")))
         else:
             rows = self.telemetry.select_raw_range(did, since)
             for r in rows:
                 ts = datetime.fromisoformat(r["ts_utc"])
+                ts = self._to_local(ts)
                 points.append((ts, r.get("rtt_avg_ms"), float(r.get("loss_pct", 0))))
 
         if self._user_win:
@@ -648,26 +650,58 @@ class AppController(QObject):
         else:
             logger.info("sound not configured device=%s status=%s", device_id, status)
 
+    def _to_local(self, ts_utc: datetime | None) -> datetime | None:
+        if not ts_utc:
+            return None
+        # UI показывает локальное время ПК, хранение в UTC.
+        if ts_utc.tzinfo is None:
+            ts_utc = ts_utc.replace(tzinfo=timezone.utc)
+        return ts_utc.astimezone()
+
+    def _format_time_local(self, ts_utc: datetime | None) -> str:
+        ts_local = self._to_local(ts_utc)
+        if not ts_local:
+            return _t("placeholder.na")
+        return ts_local.strftime("%H:%M:%S")
+
     # --- admin actions ---
     def run_traceroute_selected(self) -> None:
         did = self._selected_device_id
         if not did:
+            QMessageBox.warning(
+                self._admin_win or self._user_win,
+                _t("dialog.device_select_title"),
+                _t("dialog.device_select_message"),
+            )
             return
         snap = self._snapshots.get(int(did))
         if not snap:
+            QMessageBox.warning(
+                self._admin_win or self._user_win,
+                _t("dialog.device_select_title"),
+                _t("dialog.device_select_message"),
+            )
             return
         ip = str(snap.get("ip", "") or "")
         name = str(snap.get("name", "") or "")
         if not ip:
+            QMessageBox.warning(
+                self._admin_win or self._user_win,
+                _t("dialog.window_open_error_title"),
+                _t("dialog.window_open_error_message", error="IP is empty"),
+            )
             return
         logger.info("UI: traceroute start device_id=%s ip=%s", did, ip)
 
         def _worker() -> None:
-            cmd = ["tracert", ip] if platform.system().lower() == "windows" else ["traceroute", ip]
+            cmd = ["tracert", "-d", ip] if platform.system().lower() == "windows" else ["traceroute", ip]
             try:
                 res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                if res.returncode != 0:
+                    logger.warning("traceroute non-zero exit code=%s ip=%s", res.returncode, ip)
                 output = res.stdout.strip() or res.stderr.strip()
             except Exception as exc:
+                logger.exception("traceroute failed ip=%s", ip)
                 output = f"{type(exc).__name__}: {exc}"
 
             self._append_raw_log(did, _t("raw.traceroute_start", ip=ip))
@@ -679,6 +713,7 @@ class AppController(QObject):
                 dlg = TracerouteDialog(title=title, output=output, parent=self._admin_win or self._user_win)
                 dlg.exec()
                 self._update_details_panel(did)
+                logger.info("UI: traceroute finished device_id=%s ip=%s", did, ip)
 
             QTimer.singleShot(0, _show)
 
@@ -808,7 +843,7 @@ class AppController(QObject):
                     role=role_display(u["role"]),
                 )
             )
-            it.setData(Qt.UserRole, str(u["username"]))
+            it.setData(Qt.UserRole, int(u["id"]))
             self._admin_win.users_list.addItem(it)
 
     def admin_add_device(self) -> None:
@@ -875,12 +910,15 @@ class AppController(QObject):
         if dlg.exec() != dlg.DialogCode.Accepted:
             return
 
-        payload = self._prepare_device_payload(dlg.payload())
-        payload["ip"] = dev.ip
-        self.devices.upsert_device(payload, is_update_event=True)
-        self._reload_devices()
-        self._admin_win.cards.set_devices(self._snapshots_list())
-        self._refresh_admin_lists()
+        try:
+            payload = self._prepare_device_payload(dlg.payload())
+            self.devices.update_device_by_id(dev.id, payload, is_update_event=True)
+            self._reload_devices()
+            self._admin_win.cards.set_devices(self._snapshots_list())
+            self._refresh_admin_lists()
+        except Exception as e:
+            logger.exception("admin_edit_device failed")
+            QMessageBox.critical(self._admin_win, _t("dialog.window_open_error_title"), f"{type(e).__name__}: {e}")
 
     def admin_delete_device(self) -> None:
         if not self._admin_win:
@@ -1018,7 +1056,7 @@ class AppController(QObject):
             return
 
         try:
-            self.users.set_password(user_id=uid, new_password=dlg.password())
+            self.users.set_password(uid, dlg.password())
             logger.info("DB: password changed user_id=%s", uid)
             QMessageBox.information(
                 self._admin_win,

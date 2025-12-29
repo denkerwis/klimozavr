@@ -132,19 +132,19 @@ class DeviceEditorDialog(QDialog):
 
 
         # preload (dict or Device)
-        self.ip.setText(str(_get(data.get, "ip", "")) or "")
-        self.name.setText(str(_get(data.get, "name", "")) or "")
-        self.location.setText(str(_get(data.get, "location", "")) or "")
-        self.owner.setText(str(_get(data.get, "owner", "")) or "")
-        self.comment.setPlainText(str(_get(data.get, "comment", "")) or "")
+        self.ip.setText(str(_get(data, "ip", "")) or "")
+        self.name.setText(str(_get(data, "name", "")) or "")
+        self.location.setText(str(_get(data, "location", "")) or "")
+        self.owner.setText(str(_get(data, "owner", "")) or "")
+        self.comment.setPlainText(str(_get(data, "comment", "")) or "")
 
-        self.yellow_to_red_secs.setValue(int(_get(data.get, "yellow_to_red_secs", 120) or 120))
-        self.yellow_notify_after_secs.setValue(int(_get(data.get, "yellow_notify_after_secs", 30) or 30))
-        self.ping_timeout_ms.setValue(int(_get(data.get, "ping_timeout_ms", 1000) or 1000))
-        self.icon_path.setText(str(_get(data.get, "icon_path", "")) or "")
-        self.icon_scale.setValue(int(_get(data.get, "icon_scale", 100) or 100))
-        self.sound_down_path.setText(str(_get(data.get, "sound_down_path", "")) or "")
-        self.sound_up_path.setText(str(_get(data.get, "sound_up_path", "")) or "")
+        self.yellow_to_red_secs.setValue(int(_get(data, "yellow_to_red_secs", 120) or 120))
+        self.yellow_notify_after_secs.setValue(int(_get(data, "yellow_notify_after_secs", 30) or 30))
+        self.ping_timeout_ms.setValue(int(_get(data, "ping_timeout_ms", 1000) or 1000))
+        self.icon_path.setText(str(_get(data, "icon_path", "")) or "")
+        self.icon_scale.setValue(int(_get(data, "icon_scale", 100) or 100))
+        self.sound_down_path.setText(str(_get(data, "sound_down_path", "")) or "")
+        self.sound_up_path.setText(str(_get(data, "sound_up_path", "")) or "")
 
     def _on_ok(self) -> None:
         ip = self.ip.text().strip()
