@@ -23,7 +23,7 @@ class UserMainWindow(BaseMainWindow):
         menubar.addMenu(menu_file)
         self.setMenuBar(menubar)
 
-        # ВАЖНО: fit_viewport=True → плитки растягиваются на весь экран
+        # ВАЖНО: fit_viewport=True → адаптивная сетка плиток по ширине окна
         self.cards = DeviceCardsView(
             fit_viewport=True,
             text_scale=1.4,

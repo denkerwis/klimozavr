@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from math import ceil
 from typing import Any, Dict, List
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -205,7 +205,7 @@ QLabel {{
 
 class DeviceCardsView(QWidget):
     """
-    fit_viewport=True  -> плитки автоскейлятся и заполняют доступную область (режим USER)
+    fit_viewport=True  -> плитки формируют адаптивную сетку по ширине окна (режим USER)
     fit_viewport=False -> фиксированный размер плитки и скролл (режим ADMIN)
     """
     device_selected = Signal(int)
@@ -233,10 +233,11 @@ class DeviceCardsView(QWidget):
 
         self._cards: Dict[int, DeviceCardWidget] = {}
         self._order: List[int] = []
+        self._relayout_pending = False
 
         self._wrapper = QWidget()
         if self._fit_viewport:
-            self._wrapper.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self._wrapper.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
         wrap_h = QHBoxLayout()
         wrap_h.setContentsMargins(0, 0, 0, 0)
         wrap_h.setSpacing(0)
@@ -250,7 +251,7 @@ class DeviceCardsView(QWidget):
             self._grid.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self._grid_host.setLayout(self._grid)
         if self._fit_viewport:
-            self._grid_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self._grid_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
 
         if self._fit_viewport:
             wrap_h.setAlignment(Qt.AlignLeft | Qt.AlignTop)
@@ -270,7 +271,7 @@ class DeviceCardsView(QWidget):
             self._scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         if self._fit_viewport:
-            self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
             self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         root = QVBoxLayout()
@@ -330,7 +331,17 @@ class DeviceCardsView(QWidget):
     def resizeEvent(self, ev) -> None:  # type: ignore[override]
         super().resizeEvent(ev)
         if self._fit_viewport:
-            self._rebuild_grid()
+            self._schedule_relayout()
+
+    def _schedule_relayout(self) -> None:
+        if self._relayout_pending:
+            return
+        self._relayout_pending = True
+        QTimer.singleShot(0, self._flush_relayout)
+
+    def _flush_relayout(self) -> None:
+        self._relayout_pending = False
+        self._rebuild_grid()
 
     def _best_fit(self, n: int, vw: int, vh: int) -> _TileSpec:
         m = self._margins
@@ -366,11 +377,10 @@ class DeviceCardsView(QWidget):
             return
 
         vw = int(self._scroll.viewport().width())
-        vh = int(self._scroll.viewport().height())
 
         if self._fit_viewport:
-            spec = self._best_fit(n, vw, vh)
-            cols, tile = spec.cols, spec.tile
+            tile = max(self._min_tile_px, min(self._max_tile_px, self._base_tile_px))
+            cols = max(1, (vw + self._spacing) // (tile + self._spacing))
         else:
             tile = self._base_tile_px
             cols = max(1, (vw + self._spacing) // (tile + self._spacing))
