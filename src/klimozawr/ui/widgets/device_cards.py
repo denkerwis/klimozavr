@@ -184,7 +184,7 @@ QLabel {{
         did = _g(snap, "device_id", _g(snap, "id", self._device_id))
         self._device_id = int(did)
 
-        ip = str(_g(snap, "ip", "")).strip()
+        ip = str(_g(snap, "target", _g(snap, "ip", ""))).strip()
         name = str(_g(snap, "name", "")).strip()
         title = name or ip
         self.lbl_title.setText(title)

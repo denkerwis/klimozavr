@@ -81,6 +81,7 @@ class AppController(QObject):
         self._engine = MonitorEngine(max_workers=8)
         self._engine.on_tick = self._enqueue_tick
         self._engine.on_alert = self._enqueue_alert
+        self._engine.on_resolve = self._enqueue_resolve
 
         yellow_wav = resource_path("resources/sounds/yellow.wav")
         red_wav = resource_path("resources/sounds/red.wav")
@@ -303,7 +304,9 @@ class AppController(QObject):
             if d.id not in self._snapshots:
                 self._snapshots[d.id] = {
                     "id": d.id,
-                    "ip": d.ip,
+                    "target": d.target,
+                    "resolved_ip": d.resolved_ip,
+                    "resolved_at": d.resolved_at,
                     "name": d.name,
                     "comment": d.comment,
                     "location": d.location,
@@ -325,7 +328,9 @@ class AppController(QObject):
                 # refresh metadata
                 s = self._snapshots[d.id]
                 s.update({
-                    "ip": d.ip,
+                    "target": d.target,
+                    "resolved_ip": d.resolved_ip,
+                    "resolved_at": d.resolved_at,
                     "name": d.name,
                     "comment": d.comment,
                     "location": d.location,
@@ -354,6 +359,28 @@ class AppController(QObject):
 
     def _enqueue_alert(self, device_id: int, level: str) -> None:
         self.alert_received.emit(int(device_id), str(level).upper())
+
+    def _enqueue_resolve(self, device_id: int, resolved_ip: str | None, resolved_at: datetime | None) -> None:
+        def _update() -> None:
+            try:
+                self.devices.update_resolution(int(device_id), resolved_ip, resolved_at)
+                snap = self._snapshots.get(int(device_id))
+                if snap is not None:
+                    snap["resolved_ip"] = resolved_ip
+                    snap["resolved_at"] = resolved_at
+                logger.info(
+                    "dns resolved device=%s target=%s ip=%s at=%s",
+                    device_id,
+                    snap.get("target") if snap else None,
+                    resolved_ip,
+                    resolved_at.isoformat() if resolved_at else None,
+                )
+                if self._selected_device_id == int(device_id):
+                    self._update_details_panel(int(device_id))
+            except Exception:
+                logger.exception("failed to persist resolved ip device=%s ip=%s", device_id, resolved_ip)
+
+        QTimer.singleShot(0, _update)
 
     def _on_tick_from_engine(self, tick: TickResult) -> None:
         # store raw tick
@@ -592,7 +619,8 @@ class AppController(QObject):
 
         win.details.set_device_details(
             name=str(snap.get("name", "") or ""),
-            ip=str(snap.get("ip", "") or ""),
+            target=str(snap.get("target", "") or ""),
+            resolved_ip=str(snap.get("resolved_ip", "") or ""),
             status=status,
             rtt_ms=rtt_txt,
             loss_pct=loss_txt,
@@ -682,38 +710,38 @@ class AppController(QObject):
                 _t("dialog.device_select_message"),
             )
             return
-        ip = str(snap.get("ip", "") or "")
+        target = str(snap.get("target", "") or "")
         name = str(snap.get("name", "") or "")
-        if not ip:
+        if not target:
             QMessageBox.warning(
                 self._admin_win or self._user_win,
                 _t("dialog.window_open_error_title"),
-                _t("dialog.window_open_error_message", error="IP is empty"),
+                _t("dialog.window_open_error_message", error="Target is empty"),
             )
             return
-        logger.info("UI: traceroute start device_id=%s ip=%s", did, ip)
+        logger.info("UI: traceroute start device_id=%s target=%s", did, target)
 
         def _worker() -> None:
-            cmd = ["tracert", "-d", ip] if platform.system().lower() == "windows" else ["traceroute", ip]
+            cmd = ["tracert", "-d", target] if platform.system().lower() == "windows" else ["traceroute", target]
             try:
                 res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
                 if res.returncode != 0:
-                    logger.warning("traceroute non-zero exit code=%s ip=%s", res.returncode, ip)
+                    logger.warning("traceroute non-zero exit code=%s target=%s", res.returncode, target)
                 output = res.stdout.strip() or res.stderr.strip()
             except Exception as exc:
-                logger.exception("traceroute failed ip=%s", ip)
+                logger.exception("traceroute failed target=%s", target)
                 output = f"{type(exc).__name__}: {exc}"
 
-            self._append_raw_log(did, _t("raw.traceroute_start", ip=ip))
+            self._append_raw_log(did, _t("raw.traceroute_start", target=target))
             for line in output.splitlines()[:20]:
                 self._append_raw_log(did, line)
 
             def _show() -> None:
-                title = _t("traceroute.title", target=name or ip)
+                title = _t("traceroute.title", target=name or target)
                 dlg = TracerouteDialog(title=title, output=output, parent=self._admin_win or self._user_win)
                 dlg.exec()
                 self._update_details_panel(did)
-                logger.info("UI: traceroute finished device_id=%s ip=%s", did, ip)
+                logger.info("UI: traceroute finished device_id=%s target=%s", did, target)
 
             QTimer.singleShot(0, _show)
 
@@ -724,7 +752,7 @@ class AppController(QObject):
         if not did:
             return
         snap = self._snapshots.get(int(did))
-        label = snap.get("name") or snap.get("ip") or f"device_{did}"
+        label = snap.get("name") or snap.get("target") or f"device_{did}"
         default = self.paths.exports_dir / f"{label}_logs.csv"
         path, _ = QFileDialog.getSaveFileName(
             self._admin_win or self._user_win,
@@ -830,7 +858,7 @@ class AppController(QObject):
 
         self._admin_win.devices_list.clear()
         for d in self.devices.list_devices():
-            it = QListWidgetItem(_t("admin.devices_list_item", ip=d.ip, name=d.name))
+            it = QListWidgetItem(_t("admin.devices_list_item", target=d.target, name=d.name))
             it.setData(Qt.UserRole, int(d.id))
             self._admin_win.devices_list.addItem(it)
 
@@ -873,7 +901,7 @@ class AppController(QObject):
             logger.info("UI: device payload=%r", payload)
 
             action, did = self.devices.upsert_device(payload, is_update_event=True)
-            logger.info("DB: upsert_device action=%s id=%s ip=%s", action, did, payload.get("ip"))
+            logger.info("DB: upsert_device action=%s id=%s target=%s", action, did, payload.get("target"))
 
             self._reload_devices()
             self._refresh_admin_lists()

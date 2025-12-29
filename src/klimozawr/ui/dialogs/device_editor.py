@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
 )
 
+from klimozawr.core.net import is_valid_target
 from klimozawr.ui.strings import tr
 
 def _get(initial: Any, key: str, default: Any = "") -> Any:
@@ -32,7 +33,7 @@ class DeviceEditorDialog(QDialog):
         self.setWindowTitle(tr("device_editor.title"))
         self.setModal(True)
 
-        self.ip = QLineEdit()
+        self.target = QLineEdit()
         self.name = QLineEdit()
         self.location = QLineEdit()
         self.owner = QLineEdit()
@@ -80,7 +81,7 @@ class DeviceEditorDialog(QDialog):
         row_up.addWidget(btn_sound_up)
 
         form = QFormLayout()
-        form.addRow(tr("device_editor.label.ip"), self.ip)
+        form.addRow(tr("device_editor.label.ip"), self.target)
         form.addRow(tr("device_editor.label.name"), self.name)
         form.addRow(tr("device_editor.label.location"), self.location)
         form.addRow(tr("device_editor.label.owner"), self.owner)
@@ -116,7 +117,7 @@ class DeviceEditorDialog(QDialog):
         else:
             # Device dataclass/object
             data = {
-                "ip": getattr(initial, "ip", ""),
+                "target": getattr(initial, "target", ""),
                 "name": getattr(initial, "name", ""),
                 "comment": getattr(initial, "comment", ""),
                 "location": getattr(initial, "location", ""),
@@ -132,7 +133,7 @@ class DeviceEditorDialog(QDialog):
 
 
         # preload (dict or Device)
-        self.ip.setText(str(_get(data, "ip", "")) or "")
+        self.target.setText(str(_get(data, "target", "")) or str(_get(data, "ip", "")) or "")
         self.name.setText(str(_get(data, "name", "")) or "")
         self.location.setText(str(_get(data, "location", "")) or "")
         self.owner.setText(str(_get(data, "owner", "")) or "")
@@ -147,9 +148,12 @@ class DeviceEditorDialog(QDialog):
         self.sound_up_path.setText(str(_get(data, "sound_up_path", "")) or "")
 
     def _on_ok(self) -> None:
-        ip = self.ip.text().strip()
-        if not ip:
+        target = self.target.text().strip()
+        if not target:
             QMessageBox.critical(self, tr("device_editor.validation_title"), tr("device_editor.validation_ip_required"))
+            return
+        if not is_valid_target(target):
+            QMessageBox.critical(self, tr("device_editor.validation_title"), tr("device_editor.validation_ip_invalid"))
             return
         self.accept()
 
@@ -160,7 +164,7 @@ class DeviceEditorDialog(QDialog):
 
     def payload(self) -> dict:
         return {
-            "ip": self.ip.text().strip(),
+            "target": self.target.text().strip(),
             "name": self.name.text().strip(),
             "comment": self.comment.toPlainText().strip(),
             "location": self.location.text().strip(),

@@ -49,12 +49,14 @@ class DeviceDetailsPanel(QWidget):
         self.loss_label = QLabel(tr("details.loss_label", value=tr("placeholder.na")))
         self.last_label = QLabel(tr("details.last_label", value=tr("placeholder.na")))
         self.elapsed_label = QLabel(tr("details.elapsed_label", value=tr("placeholder.na")))
+        self.resolved_label = QLabel(tr("details.resolved_label", value=tr("placeholder.na")))
 
         metrics = QGridLayout()
         metrics.addWidget(self.rtt_label, 0, 0)
         metrics.addWidget(self.loss_label, 0, 1)
         metrics.addWidget(self.last_label, 1, 0)
         metrics.addWidget(self.elapsed_label, 1, 1)
+        metrics.addWidget(self.resolved_label, 2, 0, 1, 2)
 
         self.raw_label = QLabel(tr("details.raw_label"))
         self.raw_output = QPlainTextEdit()
@@ -111,7 +113,8 @@ class DeviceDetailsPanel(QWidget):
         self,
         *,
         name: str,
-        ip: str,
+        target: str,
+        resolved_ip: str,
         status: str,
         rtt_ms: str,
         loss_pct: str,
@@ -119,7 +122,7 @@ class DeviceDetailsPanel(QWidget):
         elapsed: str,
         raw_lines: Iterable[str],
     ) -> None:
-        title = f"{name} ({ip})" if name else ip
+        title = f"{name} ({target})" if name else target
         self.host_label.setText(title if title else tr("placeholder.na"))
         self.status_label.setText(tr("details.status_label", status=status_display(status)))
         self._apply_status_color(status)
@@ -127,6 +130,7 @@ class DeviceDetailsPanel(QWidget):
         self.loss_label.setText(tr("details.loss_label", value=loss_pct))
         self.last_label.setText(tr("details.last_label", value=last_seen))
         self.elapsed_label.setText(tr("details.elapsed_label", value=elapsed))
+        self.resolved_label.setText(tr("details.resolved_label", value=resolved_ip or tr("placeholder.na")))
         self.raw_output.setPlainText("\n".join(raw_lines) if raw_lines else "")
 
     def clear(self) -> None:
@@ -136,6 +140,7 @@ class DeviceDetailsPanel(QWidget):
         self.loss_label.setText(tr("details.loss_label", value=tr("placeholder.na")))
         self.last_label.setText(tr("details.last_label", value=tr("placeholder.na")))
         self.elapsed_label.setText(tr("details.elapsed_label", value=tr("placeholder.na")))
+        self.resolved_label.setText(tr("details.resolved_label", value=tr("placeholder.na")))
         self.raw_output.clear()
         self._apply_status_color("UNKNOWN")
 

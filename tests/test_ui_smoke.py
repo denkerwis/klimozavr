@@ -77,7 +77,7 @@ def test_selection_updates_details(qtbot, tmp_path, monkeypatch):
     controller = AppController(db=db, paths=paths)
     dr = DeviceRepo(db)
     _action, did = dr.upsert_device({
-        "ip": "10.0.0.5",
+        "target": "10.0.0.5",
         "name": "switch",
         "comment": "",
         "location": "",
@@ -113,7 +113,7 @@ def test_device_card_smoke(qtbot):
     qtbot.addWidget(card)
     card.set_snapshot({
         "device_id": 1,
-        "ip": "10.0.0.12",
+        "target": "10.0.0.12",
         "name": "очень-длинное-имя-хоста-для-проверки-обрезания",
         "status": "GREEN",
         "loss_pct": 0,

@@ -5,7 +5,7 @@ from klimozawr.storage.db import SQLiteDatabase
 
 logger = logging.getLogger("klimozawr.migrations")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def apply_migrations(db: SQLiteDatabase) -> None:
@@ -35,6 +35,11 @@ def apply_migrations(db: SQLiteDatabase) -> None:
     if ver < 2:
         _migrate_v2(conn)
         conn.execute("UPDATE schema_meta SET version=? WHERE id=1;", (2,))
+        ver = 2
+
+    if ver < 3:
+        _migrate_v3(conn)
+        conn.execute("UPDATE schema_meta SET version=? WHERE id=1;", (3,))
 
     logger.info("migrations done")
 
@@ -132,3 +137,14 @@ def _migrate_v2(conn) -> None:
         );
         """
     )
+
+
+def _migrate_v3(conn) -> None:
+    def _add_column(sql: str) -> None:
+        try:
+            conn.execute(sql)
+        except Exception:
+            logger.exception("failed to apply migration: %s", sql)
+
+    _add_column("ALTER TABLE devices ADD COLUMN resolved_ip TEXT NULL;")
+    _add_column("ALTER TABLE devices ADD COLUMN resolved_at_utc TEXT NULL;")

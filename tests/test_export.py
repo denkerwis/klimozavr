@@ -13,7 +13,7 @@ def test_export_logs_csv(tmp_path):
 
     dr = DeviceRepo(db)
     _action, did = dr.upsert_device({
-        "ip": "192.168.1.10",
+        "target": "192.168.1.10",
         "name": "router",
         "comment": "",
         "location": "",
