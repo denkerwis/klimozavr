@@ -15,6 +15,10 @@ class BaseMainWindow(QMainWindow):
     def allow_close(self, yes: bool) -> None:
         self._allow_close = yes
 
+    def request_programmatic_close(self) -> None:
+        self._allow_close = True
+        self.close()
+
     def closeEvent(self, event) -> None:
         if self._allow_close:
             event.accept()
