@@ -40,24 +40,42 @@ def _first(*vals: Any) -> Any:
 class _TileSpec:
     cols: int
     rows: int
-    tile: int
+    tile_w: int
+    tile_h: int
 
 
 class DeviceCardWidget(QFrame):
     clicked = Signal(int)
 
-    def __init__(self, device_id: int, tile_px: int = 260, text_scale: float = 1.0) -> None:
+    def __init__(
+        self,
+        device_id: int,
+        tile_width: int = 260,
+        tile_height: int = 260,
+        text_scale: float = 1.0,
+    ) -> None:
         super().__init__()
         self._device_id = int(device_id)
-        self._tile_px = int(tile_px)
+        self._tile_width = int(tile_width)
+        self._tile_height = int(tile_height)
         self._text_scale = float(text_scale)
         self._icon_path: str | None = None
         self._icon_scale: int = 100
+        self._reference_h = 260
+        self._font_min_scale = 0.75
+        self._font_max_scale = 1.8
+        self._font_base = {
+            "title": 12,
+            "ip": 10,
+            "status": 10,
+            "metrics": 9,
+            "meta": 9,
+        }
 
         self.setObjectName("DeviceCard")
         self.setFrameShape(QFrame.StyledPanel)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.setFixedSize(self._tile_px, self._tile_px)
+        self.setFixedSize(self._tile_width, self._tile_height)
 
         self.lbl_icon = QLabel("")
         self.lbl_icon.setFixedSize(48, 48)
@@ -65,14 +83,14 @@ class DeviceCardWidget(QFrame):
 
         self.lbl_title = ElidedLabel("")
         f = QFont()
-        f.setPointSize(int(12 * self._text_scale))
+        f.setPointSize(int(self._font_base["title"] * self._text_scale))
         f.setBold(True)
         self.lbl_title.setFont(f)
         self.lbl_title.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
         self.lbl_ip = QLabel("")
         ip_font = QFont()
-        ip_font.setPointSize(int(10 * self._text_scale))
+        ip_font.setPointSize(int(self._font_base["ip"] * self._text_scale))
         self.lbl_ip.setFont(ip_font)
         self.lbl_ip.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
@@ -80,21 +98,21 @@ class DeviceCardWidget(QFrame):
         self.lbl_status.setWordWrap(True)
         self.lbl_status.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         status_font = QFont()
-        status_font.setPointSize(int(10 * self._text_scale))
+        status_font.setPointSize(int(self._font_base["status"] * self._text_scale))
         self.lbl_status.setFont(status_font)
 
         self.lbl_metrics = QLabel("")
         self.lbl_metrics.setWordWrap(True)
         self.lbl_metrics.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         metrics_font = QFont()
-        metrics_font.setPointSize(int(9 * self._text_scale))
+        metrics_font.setPointSize(int(self._font_base["metrics"] * self._text_scale))
         self.lbl_metrics.setFont(metrics_font)
 
         self.lbl_meta = QLabel("")
         self.lbl_meta.setWordWrap(True)
         self.lbl_meta.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         meta_font = QFont()
-        meta_font.setPointSize(int(9 * self._text_scale))
+        meta_font.setPointSize(int(self._font_base["meta"] * self._text_scale))
         self.lbl_meta.setFont(meta_font)
 
         title_row = QHBoxLayout()
@@ -113,19 +131,40 @@ class DeviceCardWidget(QFrame):
         self.setLayout(lay)
 
         self._apply_bg("#2a2a2a")
+        self._apply_text_scale(self._text_scale)
 
     def mousePressEvent(self, ev) -> None:  # type: ignore[override]
         if ev.button() == Qt.LeftButton:
             self.clicked.emit(self._device_id)
         super().mousePressEvent(ev)
 
-    def set_tile_size(self, px: int) -> None:
-        px = int(px)
-        if px <= 0 or px == self._tile_px:
+    def set_tile_size(self, width: int, height: int) -> None:
+        width = int(width)
+        height = int(height)
+        if width <= 0 or height <= 0:
             return
-        self._tile_px = px
-        self.setFixedSize(self._tile_px, self._tile_px)
+        if width == self._tile_width and height == self._tile_height:
+            return
+        self._tile_width = width
+        self._tile_height = height
+        self.setFixedSize(self._tile_width, self._tile_height)
+        self._apply_text_scale(self._tile_height / self._reference_h)
         self._refresh_icon()
+
+    def _apply_text_scale(self, scale: float) -> None:
+        scale = max(self._font_min_scale, min(self._font_max_scale, scale * self._text_scale))
+
+        def _set_font(label: QLabel, base: int, bold: bool = False) -> None:
+            font = label.font()
+            font.setPointSize(max(7, int(round(base * scale))))
+            font.setBold(bold)
+            label.setFont(font)
+
+        _set_font(self.lbl_title, self._font_base["title"], bold=True)
+        _set_font(self.lbl_ip, self._font_base["ip"])
+        _set_font(self.lbl_status, self._font_base["status"])
+        _set_font(self.lbl_metrics, self._font_base["metrics"])
+        _set_font(self.lbl_meta, self._font_base["meta"])
 
     def _apply_bg(self, bg: str) -> None:
         self.setStyleSheet(
@@ -217,7 +256,7 @@ QLabel {{
         if pix.isNull():
             self.lbl_icon.clear()
             return
-        base = int(self._tile_px * 0.23)
+        base = int(min(self._tile_width, self._tile_height) * 0.23)
         scale = max(50, min(200, int(self._icon_scale)))
         size = max(28, int(base * scale / 100))
         self.lbl_icon.setFixedSize(size, size)
@@ -324,7 +363,12 @@ class DeviceCardsView(QWidget):
 
             card = self._cards.get(did)
             if card is None:
-                card = DeviceCardWidget(did, tile_px=self._base_tile_px, text_scale=self._text_scale)
+                card = DeviceCardWidget(
+                    did,
+                    tile_width=self._base_tile_px,
+                    tile_height=self._base_tile_px,
+                    text_scale=self._text_scale,
+                )
                 card.clicked.connect(self.device_selected.emit)
                 self._cards[did] = card
             card.set_snapshot(s)
@@ -340,7 +384,12 @@ class DeviceCardsView(QWidget):
 
         card = self._cards.get(did)
         if card is None:
-            card = DeviceCardWidget(did, tile_px=self._base_tile_px, text_scale=self._text_scale)
+            card = DeviceCardWidget(
+                did,
+                tile_width=self._base_tile_px,
+                tile_height=self._base_tile_px,
+                text_scale=self._text_scale,
+            )
             card.clicked.connect(self.device_selected.emit)
             self._cards[did] = card
             if did not in self._order:
@@ -365,20 +414,32 @@ class DeviceCardsView(QWidget):
         self._rebuild_grid()
 
     def _best_fit(self, n: int, vw: int, vh: int) -> _TileSpec:
-        m = self._margins
-        aw = max(1, vw - (m * 2))
-        ah = max(1, vh - (m * 2))
+        margins = self._grid.contentsMargins()
+        aw = max(1, vw - (margins.left() + margins.right()))
+        ah = max(1, vh - (margins.top() + margins.bottom()))
 
-        best = _TileSpec(cols=1, rows=n, tile=self._min_tile_px)
+        min_w = max(self._min_tile_px, 260)
+        min_h = max(self._min_tile_px, 180)
+        max_w = max(self._max_tile_px, 700)
+        max_h = max(self._max_tile_px, 700)
 
-        for cols in range(1, n + 1):
+        best = _TileSpec(cols=1, rows=n, tile_w=min_w, tile_h=min_h)
+        best_score = 0
+        best_area = 0
+
+        max_cols = min(n, 12)
+        for cols in range(1, max_cols + 1):
             rows = int(ceil(n / cols))
             tw = (aw - self._spacing * (cols - 1)) // cols
             th = (ah - self._spacing * (rows - 1)) // rows
-            tile = int(min(tw, th))
-            tile = max(self._min_tile_px, min(self._max_tile_px, tile))
-            if tile > best.tile:
-                best = _TileSpec(cols=cols, rows=rows, tile=tile)
+            tw = max(min_w, min(max_w, int(tw)))
+            th = max(min_h, min(max_h, int(th)))
+            score = min(tw, th)
+            area = tw * th
+            if score > best_score or (score == best_score and area > best_area):
+                best = _TileSpec(cols=cols, rows=rows, tile_w=tw, tile_h=th)
+                best_score = score
+                best_area = area
 
         return best
 
@@ -398,21 +459,23 @@ class DeviceCardsView(QWidget):
             return
 
         vw = int(self._scroll.viewport().width())
+        vh = int(self._scroll.viewport().height())
 
         if self._fit_viewport:
-            avail_w = max(1, vw - (self._margins * 2))
-            cols = max(1, (avail_w + self._spacing) // (self._min_tile_px + self._spacing))
-            tile = (avail_w - (cols - 1) * self._spacing) // cols
-            tile = max(self._min_tile_px, min(self._max_tile_px, tile))
+            spec = self._best_fit(n, vw, vh)
+            cols = spec.cols
+            tile_w = spec.tile_w
+            tile_h = spec.tile_h
         else:
-            tile = self._base_tile_px
-            cols = max(1, (vw + self._spacing) // (tile + self._spacing))
+            tile_w = self._base_tile_px
+            tile_h = self._base_tile_px
+            cols = max(1, (vw + self._spacing) // (tile_w + self._spacing))
 
         r = 0
         c = 0
         for did in ids:
             card = self._cards[did]
-            card.set_tile_size(tile)
+            card.set_tile_size(tile_w, tile_h)
             self._grid.addWidget(card, r, c)
             c += 1
             if c >= cols:
