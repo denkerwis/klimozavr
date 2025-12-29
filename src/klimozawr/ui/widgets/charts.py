@@ -62,6 +62,7 @@ class RttLossChart(QWidget):
         for ts, rtt, loss in points:
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.astimezone()
             qdt = QDateTime(ts)
             x = qdt.toMSecsSinceEpoch()
             xs.append(x)

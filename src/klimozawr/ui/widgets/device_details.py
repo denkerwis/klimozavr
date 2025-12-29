@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable
 
 from PySide6.QtCore import Qt, Signal
@@ -159,4 +159,6 @@ class DeviceDetailsPanel(QWidget):
     def format_timestamp(ts: datetime | None) -> str:
         if not ts:
             return tr("placeholder.na")
-        return ts.strftime("%Y-%m-%d %H:%M:%S")
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts.astimezone().strftime("%Y-%m-%d %H:%M:%S")

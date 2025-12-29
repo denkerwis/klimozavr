@@ -130,6 +130,8 @@ _STRINGS: Mapping[str, str] = {
     "dialog.device_cancelled_message": "Отменено (диалог вернул Отмена).",
     "dialog.device_saved_title": "Готово",
     "dialog.device_saved_message": "Устройство сохранено ({action}).",
+    "dialog.device_select_title": "Устройства",
+    "dialog.device_select_message": "Выберите устройство в списке.",
     "dialog.user_created_title": "Готово",
     "dialog.user_created_message": "Пользователь создан.",
     "dialog.user_delete_self_title": "Пользователи",
