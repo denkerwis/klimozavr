@@ -5,8 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from PySide6.QtCore import QObject, Signal, QTimer
-from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog, QListWidgetItem, QPushButton
-
+from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog, QPushButton
 
 from klimozawr.config import AppPaths
 from klimozawr.core.models import Device, TickResult
@@ -177,14 +176,8 @@ class AppController(QObject):
                 continue
             try:
                 sig.disconnect()
-            except Exception:
-                pass
-
-            except TypeError:
-                # уже не было подключений
-                pass
-            except RuntimeError:
-                # объект-реципиент мог быть уже уничтожен
+            except (TypeError, RuntimeError):
+                # уже не было подключений или объект-реципиент уничтожен
                 pass
 
     def _wire_common_window(self, win) -> None:
@@ -363,7 +356,10 @@ class AppController(QObject):
 
         # if selected device: refresh chart lazily (not every tick)
         if self._selected_device_id == tr.device_id:
-            pass
+            win = self._admin_win or self._user_win
+            details = getattr(win, "details", None)
+            if details and hasattr(details, "current_period_key"):
+                self._refresh_chart(details.current_period_key)
 
     def _on_alert_from_engine(self, device_id: int, level: str) -> None:
         st = self._engine.get_state(device_id)
@@ -576,7 +572,8 @@ class AppController(QObject):
         it = self._admin_win.devices_list.currentItem()
         if not it:
             return
-        did = int(it.data(0x0100))
+        from PySide6.QtCore import Qt
+        did = int(it.data(Qt.UserRole))
         self.devices.delete_device(did)
         self._reload_devices()
         self._refresh_admin_lists()
@@ -641,7 +638,8 @@ class AppController(QObject):
         it = self._admin_win.users_list.currentItem()
         if not it:
             return
-        uid = int(it.data(0x0100))
+        from PySide6.QtCore import Qt
+        uid = int(it.data(Qt.UserRole))
         # avoid deleting yourself
         if self.session and uid == self.session.user_id:
             QMessageBox.warning(self._admin_win, "Users", "You cannot delete your own account while logged in.")
@@ -656,10 +654,11 @@ class AppController(QObject):
         import logging
         from PySide6.QtWidgets import QMessageBox, QDialog
         from klimozawr.ui.dialogs.user_editor import SetPasswordDialog
+        from PySide6.QtCore import Qt
 
         logger = logging.getLogger(__name__)
 
-        item = self._admin_win.lst_users.currentItem()
+        item = self._admin_win.users_list.currentItem()
         if not item:
             QMessageBox.warning(self._admin_win, "Пользователи", "Выбери пользователя в списке.")
             return
