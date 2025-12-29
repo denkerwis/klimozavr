@@ -70,11 +70,25 @@ class DeviceCardWidget(QFrame):
         self.lbl_title.setFont(f)
         self.lbl_title.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
-        self.lbl_status = ElidedLabel("")
+        self.lbl_ip = QLabel("")
+        ip_font = QFont()
+        ip_font.setPointSize(int(10 * self._text_scale))
+        self.lbl_ip.setFont(ip_font)
+        self.lbl_ip.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+
+        self.lbl_status = QLabel("")
+        self.lbl_status.setWordWrap(True)
         self.lbl_status.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         status_font = QFont()
         status_font.setPointSize(int(10 * self._text_scale))
         self.lbl_status.setFont(status_font)
+
+        self.lbl_metrics = QLabel("")
+        self.lbl_metrics.setWordWrap(True)
+        self.lbl_metrics.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        metrics_font = QFont()
+        metrics_font.setPointSize(int(9 * self._text_scale))
+        self.lbl_metrics.setFont(metrics_font)
 
         self.lbl_meta = QLabel("")
         self.lbl_meta.setWordWrap(True)
@@ -89,10 +103,12 @@ class DeviceCardWidget(QFrame):
         title_row.addWidget(self.lbl_title, 1)
 
         lay = QVBoxLayout()
-        lay.setContentsMargins(12, 10, 12, 10)
-        lay.setSpacing(8)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(10)
         lay.addLayout(title_row)
+        lay.addWidget(self.lbl_ip, 0)
         lay.addWidget(self.lbl_status, 0)
+        lay.addWidget(self.lbl_metrics, 0)
         lay.addWidget(self.lbl_meta, 1)
         self.setLayout(lay)
 
@@ -131,8 +147,14 @@ QLabel {{
 
         ip = str(_g(snap, "ip", "")).strip()
         name = str(_g(snap, "name", "")).strip()
-        title = f"{name}\n{ip}" if name else ip
+        title = name or ip
         self.lbl_title.setText(title)
+        if name and ip:
+            self.lbl_ip.setText(ip)
+            self.lbl_ip.setVisible(True)
+        else:
+            self.lbl_ip.setText("")
+            self.lbl_ip.setVisible(False)
 
         status = str(_g(snap, "status", "UNKNOWN")).upper()
         unstable = bool(_g(snap, "unstable", False))
@@ -156,11 +178,10 @@ QLabel {{
         except Exception:
             rtt_txt = tr("placeholder.na")
 
-        extra = tr("device.status_unstable") if unstable else ""
+        extra = f" {tr('device.status_unstable')}" if unstable else ""
         status_text = status_display(status)
-        self.lbl_status.setText(
-            f"{status_text}{extra}\n{tr('device.loss')}: {loss_txt}  •  {tr('device.rtt')}: {rtt_txt}"
-        )
+        self.lbl_status.setText(f"{status_text}{extra}")
+        self.lbl_metrics.setText(f"{tr('device.loss')}: {loss_txt}\n{tr('device.rtt')}: {rtt_txt}")
 
         owner = str(_g(snap, "owner", "")).strip()
         location = str(_g(snap, "location", "")).strip()
@@ -379,8 +400,10 @@ class DeviceCardsView(QWidget):
         vw = int(self._scroll.viewport().width())
 
         if self._fit_viewport:
-            tile = max(self._min_tile_px, min(self._max_tile_px, self._base_tile_px))
-            cols = max(1, (vw + self._spacing) // (tile + self._spacing))
+            avail_w = max(1, vw - (self._margins * 2))
+            cols = max(1, (avail_w + self._spacing) // (self._min_tile_px + self._spacing))
+            tile = (avail_w - (cols - 1) * self._spacing) // cols
+            tile = max(self._min_tile_px, min(self._max_tile_px, tile))
         else:
             tile = self._base_tile_px
             cols = max(1, (vw + self._spacing) // (tile + self._spacing))

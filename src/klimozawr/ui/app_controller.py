@@ -160,7 +160,7 @@ class AppController(QObject):
         self._reload_devices()
         win.cards.set_devices(self._snapshots_list())
 
-        win.showFullScreen()
+        win.showMaximized()
 
     def _show_admin(self) -> None:
         self._close_windows()

@@ -26,8 +26,11 @@ class UserMainWindow(BaseMainWindow):
         # ВАЖНО: fit_viewport=True → адаптивная сетка плиток по ширине окна
         self.cards = DeviceCardsView(
             fit_viewport=True,
-            text_scale=1.4,
-            min_tile_px=260,
+            base_tile_px=360,
+            spacing=20,
+            margins=20,
+            text_scale=1.45,
+            min_tile_px=300,
             max_tile_px=520,
         )
 
