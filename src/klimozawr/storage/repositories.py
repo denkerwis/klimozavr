@@ -105,6 +105,10 @@ class DeviceRepo:
                     yellow_to_red_secs=int(r["yellow_to_red_secs"]),
                     yellow_notify_after_secs=int(r["yellow_notify_after_secs"]),
                     ping_timeout_ms=int(r["ping_timeout_ms"]),
+                    icon_path=r["icon_path"],
+                    icon_scale=int(r["icon_scale"]),
+                    sound_down_path=r["sound_down_path"],
+                    sound_up_path=r["sound_up_path"],
                 )
             )
         return out
@@ -126,6 +130,7 @@ class DeviceRepo:
                 UPDATE devices SET
                   name=?, comment=?, location=?, owner=?,
                   yellow_to_red_secs=?, yellow_notify_after_secs=?, ping_timeout_ms=?,
+                  icon_path=?, icon_scale=?, sound_down_path=?, sound_up_path=?,
                   updated_at_utc=?
                 WHERE id=?;
                 """,
@@ -137,6 +142,10 @@ class DeviceRepo:
                     int(d.get("yellow_to_red_secs", 120)),
                     int(d.get("yellow_notify_after_secs", 30)),
                     int(d.get("ping_timeout_ms", 1000)),
+                    d.get("icon_path", ""),
+                    int(d.get("icon_scale", 100)),
+                    d.get("sound_down_path", ""),
+                    d.get("sound_up_path", ""),
                     now,
                     did,
                 ),
@@ -153,8 +162,9 @@ class DeviceRepo:
             INSERT INTO devices(
               ip, name, comment, location, owner,
               yellow_to_red_secs, yellow_notify_after_secs, ping_timeout_ms,
+              icon_path, icon_scale, sound_down_path, sound_up_path,
               created_at_utc, updated_at_utc
-            ) VALUES (?,?,?,?,?,?,?,?,?,?);
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?);
             """,
             (
                 ip,
@@ -165,6 +175,10 @@ class DeviceRepo:
                 int(d.get("yellow_to_red_secs", 120)),
                 int(d.get("yellow_notify_after_secs", 30)),
                 int(d.get("ping_timeout_ms", 1000)),
+                d.get("icon_path", ""),
+                int(d.get("icon_scale", 100)),
+                d.get("sound_down_path", ""),
+                d.get("sound_up_path", ""),
                 now,
                 now,
             ),
@@ -357,6 +371,58 @@ class TelemetryRepo:
     def delete_events_before(self, cutoff_utc: datetime) -> None:
         self.db.connect().execute("DELETE FROM events WHERE ts_utc < ?;", (cutoff_utc.isoformat(),))
 
+    def export_raw_csv(
+        self,
+        path: Path,
+        device_id: Optional[int] = None,
+        since_utc: Optional[datetime] = None,
+    ) -> None:
+        headers = ["ts_utc", "device_id", "loss_pct", "rtt_last_ms", "rtt_avg_ms", "status", "unstable"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = self.db.connect()
+        if device_id is None and since_utc is None:
+            rows = conn.execute(
+                """
+                SELECT ts_utc, device_id, loss_pct, rtt_last_ms, rtt_avg_ms, status, unstable
+                FROM raw_tick
+                ORDER BY ts_utc;
+                """
+            ).fetchall()
+        elif device_id is not None and since_utc is None:
+            rows = conn.execute(
+                """
+                SELECT ts_utc, device_id, loss_pct, rtt_last_ms, rtt_avg_ms, status, unstable
+                FROM raw_tick
+                WHERE device_id=?
+                ORDER BY ts_utc;
+                """,
+                (int(device_id),),
+            ).fetchall()
+        else:
+            conds = []
+            params: list[object] = []
+            if device_id is not None:
+                conds.append("device_id=?")
+                params.append(int(device_id))
+            if since_utc is not None:
+                conds.append("ts_utc>=?")
+                params.append(since_utc.isoformat())
+            where = " AND ".join(conds) if conds else "1=1"
+            rows = conn.execute(
+                f"""
+                SELECT ts_utc, device_id, loss_pct, rtt_last_ms, rtt_avg_ms, status, unstable
+                FROM raw_tick
+                WHERE {where}
+                ORDER BY ts_utc;
+                """,
+                tuple(params),
+            ).fetchall()
+        with path.open("w", encoding="utf-8-sig", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=headers)
+            w.writeheader()
+            for r in rows:
+                w.writerow(dict(r))
+
 
 class AlertRepo:
     def __init__(self, db: SQLiteDatabase) -> None:
@@ -417,4 +483,25 @@ class AlertRepo:
         self.db.connect().execute(
             "UPDATE alerts SET resolved_at_utc=? WHERE device_id=? AND level=? AND resolved_at_utc IS NULL;",
             (utc_now_iso(), device_id, level),
+        )
+
+
+class SettingsRepo:
+    def __init__(self, db: SQLiteDatabase) -> None:
+        self.db = db
+
+    def get(self, key: str, default: str = "") -> str:
+        row = self.db.connect().execute("SELECT value FROM app_settings WHERE key=?;", (key,)).fetchone()
+        if not row:
+            return default
+        return str(row["value"])
+
+    def set(self, key: str, value: str) -> None:
+        self.db.connect().execute(
+            """
+            INSERT INTO app_settings(key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value;
+            """,
+            (key, value),
         )

@@ -8,13 +8,13 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout
 
 
 class RttLossChart(QWidget):
-    def __init__(self) -> None:
+    def __init__(self, *, compact: bool = False) -> None:
         super().__init__()
         self._series_rtt = QLineSeries()
         self._series_loss = QLineSeries()
 
         chart = QChart()
-        chart.legend().setVisible(True)
+        chart.legend().setVisible(not compact)
         self._series_rtt.setName("RTT (ms)")
         self._series_loss.setName("loss (%)")
         chart.addSeries(self._series_rtt)
@@ -22,19 +22,19 @@ class RttLossChart(QWidget):
 
         self._axis_x = QDateTimeAxis()
         self._axis_x.setFormat("HH:mm")
-        self._axis_x.setTitleText("время")
+        self._axis_x.setTitleText("время" if not compact else "")
         chart.addAxis(self._axis_x, Qt.AlignBottom)
         self._series_rtt.attachAxis(self._axis_x)
         self._series_loss.attachAxis(self._axis_x)
 
         self._axis_rtt = QValueAxis()
-        self._axis_rtt.setTitleText("RTT (мс)")
+        self._axis_rtt.setTitleText("RTT (мс)" if not compact else "")
         chart.addAxis(self._axis_rtt, Qt.AlignLeft)
         self._series_rtt.attachAxis(self._axis_rtt)
 
         self._axis_loss = QValueAxis()
         self._axis_loss.setRange(0, 100)
-        self._axis_loss.setTitleText("потери (%)")
+        self._axis_loss.setTitleText("потери (%)" if not compact else "")
         chart.addAxis(self._axis_loss, Qt.AlignRight)
         self._series_loss.attachAxis(self._axis_loss)
 
@@ -44,6 +44,10 @@ class RttLossChart(QWidget):
         layout = QVBoxLayout()
         layout.addWidget(self.view)
         self.setLayout(layout)
+
+        if compact:
+            self.view.setMinimumHeight(160)
+            self.view.setMaximumHeight(190)
 
     def set_data(self, points: list[tuple[datetime, float | None, float | None]]) -> None:
         self._series_rtt.clear()
@@ -77,5 +81,4 @@ class RttLossChart(QWidget):
             self._axis_rtt.setRange(float(mn) * 0.9, float(mx) * 1.1)
         else:
             self._axis_rtt.setRange(0, 100)
-
 

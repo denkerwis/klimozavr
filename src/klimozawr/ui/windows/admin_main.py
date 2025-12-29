@@ -20,7 +20,11 @@ class AdminMainWindow(BaseMainWindow):
         file_menu = QMenu("Меню", self)
         self.action_logout = QAction("Выйти из аккаунта", self)
         self.action_exit = QAction("Выход", self)
+        self.action_export_logs = QAction("Экспорт логов (общая)", self)
+        self.action_settings = QAction("Настройки", self)
         file_menu.addAction(self.action_logout)
+        file_menu.addAction(self.action_export_logs)
+        file_menu.addAction(self.action_settings)
         file_menu.addAction(self.action_exit)
         self.menu.addMenu(file_menu)
         self.setMenuBar(self.menu)
@@ -88,5 +92,4 @@ class AdminMainWindow(BaseMainWindow):
         self.tabs.addTab(users_tab, "Пользователи")
 
         self.setCentralWidget(self.tabs)
-
 

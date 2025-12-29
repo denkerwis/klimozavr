@@ -5,7 +5,7 @@ from math import ceil
 from typing import Any, Dict, List
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -44,34 +44,54 @@ class _TileSpec:
 class DeviceCardWidget(QFrame):
     clicked = Signal(int)
 
-    def __init__(self, device_id: int, tile_px: int = 260) -> None:
+    def __init__(self, device_id: int, tile_px: int = 260, text_scale: float = 1.0) -> None:
         super().__init__()
         self._device_id = int(device_id)
         self._tile_px = int(tile_px)
+        self._text_scale = float(text_scale)
+        self._icon_path: str | None = None
+        self._icon_scale: int = 100
 
         self.setObjectName("DeviceCard")
         self.setFrameShape(QFrame.StyledPanel)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setFixedSize(self._tile_px, self._tile_px)
 
+        self.lbl_icon = QLabel("")
+        self.lbl_icon.setFixedSize(48, 48)
+        self.lbl_icon.setScaledContents(True)
+
         self.lbl_title = QLabel("")
         f = QFont()
-        f.setPointSize(12)
+        f.setPointSize(int(12 * self._text_scale))
         f.setBold(True)
         self.lbl_title.setFont(f)
         self.lbl_title.setWordWrap(True)
+        self.lbl_title.setTextElideMode(Qt.ElideRight)
 
         self.lbl_status = QLabel("")
         self.lbl_status.setWordWrap(True)
+        self.lbl_status.setTextElideMode(Qt.ElideRight)
+        status_font = QFont()
+        status_font.setPointSize(int(10 * self._text_scale))
+        self.lbl_status.setFont(status_font)
 
         self.lbl_meta = QLabel("")
         self.lbl_meta.setWordWrap(True)
         self.lbl_meta.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        meta_font = QFont()
+        meta_font.setPointSize(int(9 * self._text_scale))
+        self.lbl_meta.setFont(meta_font)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        title_row.addWidget(self.lbl_icon, 0)
+        title_row.addWidget(self.lbl_title, 1)
 
         lay = QVBoxLayout()
         lay.setContentsMargins(12, 10, 12, 10)
         lay.setSpacing(8)
-        lay.addWidget(self.lbl_title, 0)
+        lay.addLayout(title_row)
         lay.addWidget(self.lbl_status, 0)
         lay.addWidget(self.lbl_meta, 1)
         self.setLayout(lay)
@@ -89,6 +109,7 @@ class DeviceCardWidget(QFrame):
             return
         self._tile_px = px
         self.setFixedSize(self._tile_px, self._tile_px)
+        self._refresh_icon()
 
     def _apply_bg(self, bg: str) -> None:
         self.setStyleSheet(
@@ -151,6 +172,10 @@ QLabel {{
             meta.append(f"коммент: {comment}")
         self.lbl_meta.setText("\n".join(meta) if meta else "")
 
+        self._icon_path = _g(snap, "icon_path", None)
+        self._icon_scale = int(_g(snap, "icon_scale", 100) or 100)
+        self._refresh_icon()
+
         if status == "GREEN":
             self._apply_bg("#1e4d2b")
         elif status == "YELLOW":
@@ -159,6 +184,20 @@ QLabel {{
             self._apply_bg("#5a1e1e")
         else:
             self._apply_bg("#2a2a2a")
+
+    def _refresh_icon(self) -> None:
+        if not self._icon_path:
+            self.lbl_icon.clear()
+            return
+        pix = QPixmap(self._icon_path)
+        if pix.isNull():
+            self.lbl_icon.clear()
+            return
+        base = int(self._tile_px * 0.23)
+        scale = max(50, min(200, int(self._icon_scale)))
+        size = max(28, int(base * scale / 100))
+        self.lbl_icon.setFixedSize(size, size)
+        self.lbl_icon.setPixmap(pix.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
 
 class DeviceCardsView(QWidget):
@@ -177,6 +216,7 @@ class DeviceCardsView(QWidget):
         margins: int = 14,
         min_tile_px: int = 170,
         max_tile_px: int = 420,
+        text_scale: float = 1.0,
     ) -> None:
         super().__init__()
 
@@ -186,6 +226,7 @@ class DeviceCardsView(QWidget):
         self._margins = int(margins)
         self._min_tile_px = int(min_tile_px)
         self._max_tile_px = int(max_tile_px)
+        self._text_scale = float(text_scale)
 
         self._cards: Dict[int, DeviceCardWidget] = {}
         self._order: List[int] = []
@@ -246,7 +287,7 @@ class DeviceCardsView(QWidget):
 
             card = self._cards.get(did)
             if card is None:
-                card = DeviceCardWidget(did, tile_px=self._base_tile_px)
+                card = DeviceCardWidget(did, tile_px=self._base_tile_px, text_scale=self._text_scale)
                 card.clicked.connect(self.device_selected.emit)
                 self._cards[did] = card
             card.set_snapshot(s)
@@ -262,7 +303,7 @@ class DeviceCardsView(QWidget):
 
         card = self._cards.get(did)
         if card is None:
-            card = DeviceCardWidget(did, tile_px=self._base_tile_px)
+            card = DeviceCardWidget(did, tile_px=self._base_tile_px, text_scale=self._text_scale)
             card.clicked.connect(self.device_selected.emit)
             self._cards[did] = card
             if did not in self._order:
