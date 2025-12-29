@@ -36,6 +36,16 @@ def compute_status(
     return "RED"
 
 
+def should_promote_to_red(
+    now_utc: datetime,
+    yellow_start_utc: Optional[datetime],
+    yellow_to_red_secs: int,
+) -> bool:
+    if yellow_start_utc is None:
+        return False
+    return (now_utc - yellow_start_utc) >= timedelta(seconds=yellow_to_red_secs)
+
+
 def derive_tick_metrics(rtts_ms: list[int | None]) -> tuple[int, Optional[int], Optional[int], bool]:
     ok = [x for x in rtts_ms if isinstance(x, int)]
     loss_pct = compute_loss_pct(len(ok), total=len(rtts_ms))
