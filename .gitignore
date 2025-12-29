@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+.dist-info/
+
+# venv
+.venv/
+venv/
+
+# builds
+build/
+dist/
+*.spec.bak
+
+# IDE
+.vscode/
+.idea/
+
+# logs/data/exports (храним локально, не в git)
+*.log
+data/
+exports/
