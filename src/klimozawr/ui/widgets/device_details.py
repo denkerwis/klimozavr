@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
 )
 
+from klimozawr.ui.strings import status_display, tr
 from klimozawr.ui.widgets.charts import RttLossChart
 
 
@@ -28,7 +29,7 @@ class DeviceDetailsPanel(QWidget):
     def __init__(self) -> None:
         super().__init__()
 
-        self.title = QLabel("Детали устройства")
+        self.title = QLabel(tr("details.title"))
         self.title.setStyleSheet("font-size: 16px; font-weight: 700;")
 
         self.host_label = QLabel("—")
@@ -38,16 +39,16 @@ class DeviceDetailsPanel(QWidget):
         self.host_label.setFont(host_font)
         self.host_label.setWordWrap(True)
 
-        self.status_label = QLabel("Статус: —")
+        self.status_label = QLabel(tr("details.status_label", status=tr("placeholder.na")))
         status_font = QFont()
         status_font.setPointSize(12)
         status_font.setBold(True)
         self.status_label.setFont(status_font)
 
-        self.rtt_label = QLabel("RTT: —")
-        self.loss_label = QLabel("Loss: —")
-        self.last_label = QLabel("LAST: —")
-        self.elapsed_label = QLabel("ELAPSED: —")
+        self.rtt_label = QLabel(tr("details.rtt_label", value=tr("placeholder.na")))
+        self.loss_label = QLabel(tr("details.loss_label", value=tr("placeholder.na")))
+        self.last_label = QLabel(tr("details.last_label", value=tr("placeholder.na")))
+        self.elapsed_label = QLabel(tr("details.elapsed_label", value=tr("placeholder.na")))
 
         metrics = QGridLayout()
         metrics.addWidget(self.rtt_label, 0, 0)
@@ -55,16 +56,16 @@ class DeviceDetailsPanel(QWidget):
         metrics.addWidget(self.last_label, 1, 0)
         metrics.addWidget(self.elapsed_label, 1, 1)
 
-        self.raw_label = QLabel("RAW output (последние строки)")
+        self.raw_label = QLabel(tr("details.raw_label"))
         self.raw_output = QPlainTextEdit()
         self.raw_output.setReadOnly(True)
         self.raw_output.setMaximumBlockCount(20)
         self.raw_output.setMinimumHeight(90)
         self.raw_output.setStyleSheet("font-family: Consolas, 'Courier New', monospace; font-size: 11px;")
 
-        self.btn_traceroute = QPushButton("Traceroute (выбранный)")
-        self.btn_export = QPushButton("Экспорт логов (выбранный)")
-        self.btn_export_all = QPushButton("Экспорт логов (общая)")
+        self.btn_traceroute = QPushButton(tr("details.button.traceroute"))
+        self.btn_export = QPushButton(tr("details.button.export_selected"))
+        self.btn_export_all = QPushButton(tr("details.button.export_all"))
         self.btn_traceroute.clicked.connect(self.traceroute_requested.emit)
         self.btn_export.clicked.connect(self.export_selected_requested.emit)
         self.btn_export_all.clicked.connect(self.export_all_requested.emit)
@@ -75,12 +76,12 @@ class DeviceDetailsPanel(QWidget):
         buttons.addWidget(self.btn_export_all)
 
         self.period = QComboBox()
-        self.period.addItem("1 час", "1h")
-        self.period.addItem("24 часа", "24h")
-        self.period.addItem("72 часа", "72h")
-        self.period.addItem("7 дней", "7d")
-        self.period.addItem("30 дней", "30d")
-        self.period.addItem("90 дней", "90d")
+        self.period.addItem(tr("details.period.1h"), "1h")
+        self.period.addItem(tr("details.period.24h"), "24h")
+        self.period.addItem(tr("details.period.72h"), "72h")
+        self.period.addItem(tr("details.period.7d"), "7d")
+        self.period.addItem(tr("details.period.30d"), "30d")
+        self.period.addItem(tr("details.period.90d"), "90d")
         self.period.currentIndexChanged.connect(self._on_period)
 
         self.current_period_key = "1h"
@@ -119,22 +120,22 @@ class DeviceDetailsPanel(QWidget):
         raw_lines: Iterable[str],
     ) -> None:
         title = f"{name} ({ip})" if name else ip
-        self.host_label.setText(title if title else "—")
-        self.status_label.setText(f"Статус: {status}")
+        self.host_label.setText(title if title else tr("placeholder.na"))
+        self.status_label.setText(tr("details.status_label", status=status_display(status)))
         self._apply_status_color(status)
-        self.rtt_label.setText(f"RTT: {rtt_ms}")
-        self.loss_label.setText(f"Loss: {loss_pct}")
-        self.last_label.setText(f"LAST: {last_seen}")
-        self.elapsed_label.setText(f"ELAPSED: {elapsed}")
+        self.rtt_label.setText(tr("details.rtt_label", value=rtt_ms))
+        self.loss_label.setText(tr("details.loss_label", value=loss_pct))
+        self.last_label.setText(tr("details.last_label", value=last_seen))
+        self.elapsed_label.setText(tr("details.elapsed_label", value=elapsed))
         self.raw_output.setPlainText("\n".join(raw_lines) if raw_lines else "")
 
     def clear(self) -> None:
-        self.host_label.setText("—")
-        self.status_label.setText("Статус: —")
-        self.rtt_label.setText("RTT: —")
-        self.loss_label.setText("Loss: —")
-        self.last_label.setText("LAST: —")
-        self.elapsed_label.setText("ELAPSED: —")
+        self.host_label.setText(tr("placeholder.na"))
+        self.status_label.setText(tr("details.status_label", status=tr("placeholder.na")))
+        self.rtt_label.setText(tr("details.rtt_label", value=tr("placeholder.na")))
+        self.loss_label.setText(tr("details.loss_label", value=tr("placeholder.na")))
+        self.last_label.setText(tr("details.last_label", value=tr("placeholder.na")))
+        self.elapsed_label.setText(tr("details.elapsed_label", value=tr("placeholder.na")))
         self.raw_output.clear()
         self._apply_status_color("UNKNOWN")
 
@@ -157,5 +158,5 @@ class DeviceDetailsPanel(QWidget):
     @staticmethod
     def format_timestamp(ts: datetime | None) -> str:
         if not ts:
-            return "—"
+            return tr("placeholder.na")
         return ts.strftime("%Y-%m-%d %H:%M:%S")

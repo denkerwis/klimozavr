@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QMessageBox, QComboBox, QVBoxLayout
 )
 
+from klimozawr.ui.strings import role_display, tr
 
 @dataclass(frozen=True)
 class NewUserPayload:
@@ -18,7 +19,7 @@ class NewUserPayload:
 class CreateUserDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Создать пользователя")
+        self.setWindowTitle(tr("user.create_title"))
         self.setModal(True)
 
         self._payload: NewUserPayload | None = None
@@ -30,21 +31,22 @@ class CreateUserDialog(QDialog):
         self.ed_password2.setEchoMode(QLineEdit.Password)
 
         self.cb_role = QComboBox()
-        self.cb_role.addItems(["user", "admin"])
-        self.cb_role.setCurrentText("user")
+        self.cb_role.addItem(role_display("user"), "user")
+        self.cb_role.addItem(role_display("admin"), "admin")
+        self.cb_role.setCurrentIndex(0)
 
         form = QFormLayout()
-        form.addRow("Логин *", self.ed_username)
-        form.addRow("Роль", self.cb_role)
-        form.addRow("Пароль *", self.ed_password)
-        form.addRow("Повтор пароля *", self.ed_password2)
+        form.addRow(tr("user.field.username"), self.ed_username)
+        form.addRow(tr("user.field.role"), self.cb_role)
+        form.addRow(tr("user.field.password"), self.ed_password)
+        form.addRow(tr("user.field.password_repeat"), self.ed_password2)
 
-        hint = QLabel("Поля со * обязательны.")
+        hint = QLabel(tr("user.hint_required_fields"))
         hint.setStyleSheet("opacity: 0.75;")
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Ok).setText("Создать")
-        buttons.button(QDialogButtonBox.Cancel).setText("Отмена")
+        buttons.button(QDialogButtonBox.Ok).setText(tr("user.button.create"))
+        buttons.button(QDialogButtonBox.Cancel).setText(tr("user.button.cancel"))
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
 
@@ -58,19 +60,19 @@ class CreateUserDialog(QDialog):
         username = self.ed_username.text().strip()
         pw1 = self.ed_password.text()
         pw2 = self.ed_password2.text()
-        role = self.cb_role.currentText().strip()
+        role = str(self.cb_role.currentData()).strip()
 
         if not username:
-            QMessageBox.warning(self, "Проверка", "Логин обязателен.")
+            QMessageBox.warning(self, tr("user.validation_title"), tr("user.validation_username_required"))
             return
         if role not in ("admin", "user"):
-            QMessageBox.warning(self, "Проверка", "Некорректная роль.")
+            QMessageBox.warning(self, tr("user.validation_title"), tr("user.validation_role_invalid"))
             return
         if not pw1:
-            QMessageBox.warning(self, "Проверка", "Пароль обязателен.")
+            QMessageBox.warning(self, tr("user.validation_title"), tr("user.validation_password_required"))
             return
         if pw1 != pw2:
-            QMessageBox.warning(self, "Проверка", "Пароли не совпадают.")
+            QMessageBox.warning(self, tr("user.validation_title"), tr("user.validation_passwords_mismatch"))
             return
 
         self._payload = NewUserPayload(username=username, password=pw1, role=role)
@@ -84,7 +86,7 @@ class CreateUserDialog(QDialog):
 class SetPasswordDialog(QDialog):
     def __init__(self, username: str, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"Сменить пароль: {username}")
+        self.setWindowTitle(tr("user.set_password_title", username=username))
         self.setModal(True)
         self._password: str | None = None
 
@@ -94,12 +96,12 @@ class SetPasswordDialog(QDialog):
         self.ed_password2.setEchoMode(QLineEdit.Password)
 
         form = QFormLayout()
-        form.addRow("Новый пароль *", self.ed_password)
-        form.addRow("Повтор *", self.ed_password2)
+        form.addRow(tr("user.field.password_new"), self.ed_password)
+        form.addRow(tr("user.field.password_repeat_short"), self.ed_password2)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Ok).setText("Сохранить")
-        buttons.button(QDialogButtonBox.Cancel).setText("Отмена")
+        buttons.button(QDialogButtonBox.Ok).setText(tr("user.button.save"))
+        buttons.button(QDialogButtonBox.Cancel).setText(tr("user.button.cancel"))
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
 
@@ -112,10 +114,10 @@ class SetPasswordDialog(QDialog):
         pw1 = self.ed_password.text()
         pw2 = self.ed_password2.text()
         if not pw1:
-            QMessageBox.warning(self, "Проверка", "Пароль обязателен.")
+            QMessageBox.warning(self, tr("user.validation_title"), tr("user.validation_password_required"))
             return
         if pw1 != pw2:
-            QMessageBox.warning(self, "Проверка", "Пароли не совпадают.")
+            QMessageBox.warning(self, tr("user.validation_title"), tr("user.validation_passwords_mismatch"))
             return
         self._password = pw1
         self.accept()

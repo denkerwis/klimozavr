@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
 )
 
+from klimozawr.ui.strings import tr
 
 def _get(initial: Any, key: str, default: Any = "") -> Any:
     if initial is None:
@@ -28,7 +29,7 @@ def _get(initial: Any, key: str, default: Any = "") -> Any:
 class DeviceEditorDialog(QDialog):
     def __init__(self, initial: Any = None, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Устройство")
+        self.setWindowTitle(tr("device_editor.title"))
         self.setModal(True)
 
         self.ip = QLineEdit()
@@ -59,12 +60,12 @@ class DeviceEditorDialog(QDialog):
         self.sound_down_path = QLineEdit()
         self.sound_up_path = QLineEdit()
 
-        btn_icon = QPushButton("Выбрать...")
-        btn_sound_down = QPushButton("Выбрать...")
-        btn_sound_up = QPushButton("Выбрать...")
-        btn_icon.clicked.connect(lambda: self._pick_file(self.icon_path, "PNG Files (*.png)"))
-        btn_sound_down.clicked.connect(lambda: self._pick_file(self.sound_down_path, "WAV Files (*.wav)"))
-        btn_sound_up.clicked.connect(lambda: self._pick_file(self.sound_up_path, "WAV Files (*.wav)"))
+        btn_icon = QPushButton(tr("device_editor.button.pick"))
+        btn_sound_down = QPushButton(tr("device_editor.button.pick"))
+        btn_sound_up = QPushButton(tr("device_editor.button.pick"))
+        btn_icon.clicked.connect(lambda: self._pick_file(self.icon_path, tr("dialog.png_filter")))
+        btn_sound_down.clicked.connect(lambda: self._pick_file(self.sound_down_path, tr("dialog.wav_filter")))
+        btn_sound_up.clicked.connect(lambda: self._pick_file(self.sound_up_path, tr("dialog.wav_filter")))
 
         row_icon = QHBoxLayout()
         row_icon.addWidget(self.icon_path, 1)
@@ -79,21 +80,21 @@ class DeviceEditorDialog(QDialog):
         row_up.addWidget(btn_sound_up)
 
         form = QFormLayout()
-        form.addRow("IP", self.ip)
-        form.addRow("Имя", self.name)
-        form.addRow("Локация", self.location)
-        form.addRow("Владелец", self.owner)
-        form.addRow("Комментарий", self.comment)
-        form.addRow("yellow_to_red_secs", self.yellow_to_red_secs)
-        form.addRow("yellow_notify_after_secs", self.yellow_notify_after_secs)
-        form.addRow("ping_timeout_ms", self.ping_timeout_ms)
-        form.addRow("Иконка PNG", row_icon)
-        form.addRow("Масштаб иконки (%)", self.icon_scale)
-        form.addRow("Звук DOWN.wav", row_down)
-        form.addRow("Звук UP.wav", row_up)
+        form.addRow(tr("device_editor.label.ip"), self.ip)
+        form.addRow(tr("device_editor.label.name"), self.name)
+        form.addRow(tr("device_editor.label.location"), self.location)
+        form.addRow(tr("device_editor.label.owner"), self.owner)
+        form.addRow(tr("device_editor.label.comment"), self.comment)
+        form.addRow(tr("device_editor.label.yellow_to_red_secs"), self.yellow_to_red_secs)
+        form.addRow(tr("device_editor.label.yellow_notify_after_secs"), self.yellow_notify_after_secs)
+        form.addRow(tr("device_editor.label.ping_timeout_ms"), self.ping_timeout_ms)
+        form.addRow(tr("device_editor.label.icon"), row_icon)
+        form.addRow(tr("device_editor.label.icon_scale"), self.icon_scale)
+        form.addRow(tr("device_editor.label.sound_down"), row_down)
+        form.addRow(tr("device_editor.label.sound_up"), row_up)
 
-        btn_ok = QPushButton("Готово")
-        btn_cancel = QPushButton("Отмена")
+        btn_ok = QPushButton(tr("device_editor.button.ok"))
+        btn_cancel = QPushButton(tr("device_editor.button.cancel"))
         btn_ok.clicked.connect(self._on_ok)
         btn_cancel.clicked.connect(self.reject)
 
@@ -148,12 +149,12 @@ class DeviceEditorDialog(QDialog):
     def _on_ok(self) -> None:
         ip = self.ip.text().strip()
         if not ip:
-            QMessageBox.critical(self, "Ошибка", "IP обязателен.")
+            QMessageBox.critical(self, tr("device_editor.validation_title"), tr("device_editor.validation_ip_required"))
             return
         self.accept()
 
     def _pick_file(self, target: QLineEdit, filter_text: str) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Выбор файла", "", filter_text)
+        path, _ = QFileDialog.getOpenFileName(self, tr("device_editor.file_dialog_title"), "", filter_text)
         if path:
             target.setText(path)
 

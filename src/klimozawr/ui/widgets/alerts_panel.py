@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
     QPushButton, QHBoxLayout
 )
 
+from klimozawr.ui.strings import status_display, tr
+
 
 class AlertsPanel(QWidget):
     """
@@ -21,7 +23,7 @@ class AlertsPanel(QWidget):
 
         self._alerts: Dict[int, dict] = {}
 
-        title = QLabel("АЛЕРТЫ")
+        title = QLabel(tr("alerts.title"))
         title.setStyleSheet("font-size: 16px; font-weight: 700;")
 
         self.list = QListWidget()
@@ -85,11 +87,18 @@ class AlertsPanel(QWidget):
             lay.setContentsMargins(8, 6, 8, 6)
             lay.setSpacing(10)
 
-            text = QLabel(f"[{lvl}] устройство #{did}: {msg}")
+            text = QLabel(
+                tr(
+                    "alerts.item_text",
+                    level=status_display(lvl),
+                    device_id=did,
+                    message=msg,
+                )
+            )
             text.setWordWrap(True)
             text.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 
-            btn = QPushButton("Подтвердить")
+            btn = QPushButton(tr("alerts.button.ack"))
             btn.setFixedWidth(90)
             btn.clicked.connect(lambda _=False, _aid=aid, _lvl=lvl, _did=did: self.ack_requested.emit(_aid, _lvl, _did))
 
@@ -100,5 +109,4 @@ class AlertsPanel(QWidget):
             item.setSizeHint(w.sizeHint())
             self.list.addItem(item)
             self.list.setItemWidget(item, w)
-
 

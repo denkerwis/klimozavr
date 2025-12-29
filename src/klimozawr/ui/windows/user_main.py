@@ -6,19 +6,20 @@ from PySide6.QtGui import QAction
 from klimozawr.ui.widgets.device_cards import DeviceCardsView
 from klimozawr.ui.widgets.device_details import DeviceDetailsPanel
 from klimozawr.ui.windows.base_main import BaseMainWindow
+from klimozawr.ui.strings import tr
 
 
 class UserMainWindow(BaseMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("klimozawr (User)")
+        self.setWindowTitle(tr("app.title_user"))
         self.setWindowState(self.windowState())  # no-op, but keeps pattern
 
         menubar = QMenuBar()
-        menu_file = QMenu("Меню", self)
-        self.action_logout = QAction("Выйти из аккаунта", self)
-        self.action_exit = QAction("Выход", self)
-        self.action_export_logs = QAction("Экспорт логов (общая)", self)
+        menu_file = QMenu(tr("menu.title"), self)
+        self.action_logout = QAction(tr("menu.logout"), self)
+        self.action_exit = QAction(tr("menu.exit"), self)
+        self.action_export_logs = QAction(tr("menu.export_logs_all"), self)
         menu_file.addAction(self.action_logout)
         menu_file.addAction(self.action_export_logs)
         menu_file.addAction(self.action_exit)

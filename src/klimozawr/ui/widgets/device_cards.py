@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from klimozawr.ui.strings import status_display, tr
+from klimozawr.ui.widgets.elided_label import ElidedLabel
 
 def _g(obj: Any, key: str, default: Any = None) -> Any:
     try:
@@ -61,17 +63,15 @@ class DeviceCardWidget(QFrame):
         self.lbl_icon.setFixedSize(48, 48)
         self.lbl_icon.setScaledContents(True)
 
-        self.lbl_title = QLabel("")
+        self.lbl_title = ElidedLabel("")
         f = QFont()
         f.setPointSize(int(12 * self._text_scale))
         f.setBold(True)
         self.lbl_title.setFont(f)
-        self.lbl_title.setWordWrap(True)
-        self.lbl_title.setTextElideMode(Qt.ElideRight)
+        self.lbl_title.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
-        self.lbl_status = QLabel("")
-        self.lbl_status.setWordWrap(True)
-        self.lbl_status.setTextElideMode(Qt.ElideRight)
+        self.lbl_status = ElidedLabel("")
+        self.lbl_status.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         status_font = QFont()
         status_font.setPointSize(int(10 * self._text_scale))
         self.lbl_status.setFont(status_font)
@@ -141,23 +141,26 @@ QLabel {{
         rtt = _first(_g(snap, "rtt_last_ms"), _g(snap, "rtt_last"), _g(snap, "rtt_ms"))
 
         # loss
-        loss_txt = "—"
+        loss_txt = tr("placeholder.na")
         try:
             if loss is not None:
                 loss_txt = f"{int(float(loss))}%"
         except Exception:
-            loss_txt = "—"
+            loss_txt = tr("placeholder.na")
 
         # rtt
-        rtt_txt = "—"
+        rtt_txt = tr("placeholder.na")
         try:
             if rtt is not None:
-                rtt_txt = f"{int(float(rtt))} ms"
+                rtt_txt = f"{int(float(rtt))} {tr('unit.ms')}"
         except Exception:
-            rtt_txt = "—"
+            rtt_txt = tr("placeholder.na")
 
-        extra = " • нестабильно" if unstable else ""
-        self.lbl_status.setText(f"{status}{extra}\nпотери: {loss_txt}  •  задержка: {rtt_txt}")
+        extra = tr("device.status_unstable") if unstable else ""
+        status_text = status_display(status)
+        self.lbl_status.setText(
+            f"{status_text}{extra}\n{tr('device.loss')}: {loss_txt}  •  {tr('device.rtt')}: {rtt_txt}"
+        )
 
         owner = str(_g(snap, "owner", "")).strip()
         location = str(_g(snap, "location", "")).strip()
@@ -165,11 +168,11 @@ QLabel {{
 
         meta: List[str] = []
         if owner:
-            meta.append(f"владелец: {owner}")
+            meta.append(tr("device.meta.owner", value=owner))
         if location:
-            meta.append(f"локация: {location}")
+            meta.append(tr("device.meta.location", value=location))
         if comment:
-            meta.append(f"коммент: {comment}")
+            meta.append(tr("device.meta.comment", value=comment))
         self.lbl_meta.setText("\n".join(meta) if meta else "")
 
         self._icon_path = _g(snap, "icon_path", None)

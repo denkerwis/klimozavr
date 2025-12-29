@@ -6,12 +6,13 @@ from PySide6.QtWidgets import (
 )
 
 from klimozawr.storage.repositories import UserRepo
+from klimozawr.ui.strings import tr
 
 
 class CreateFirstAdminDialog(QDialog):
     def __init__(self, user_repo: UserRepo) -> None:
         super().__init__()
-        self.setWindowTitle("Создать администратора")
+        self.setWindowTitle(tr("first_admin.title"))
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowCloseButtonHint)
 
@@ -22,10 +23,10 @@ class CreateFirstAdminDialog(QDialog):
         self.password.setEchoMode(QLineEdit.Password)
 
         form = QFormLayout()
-        form.addRow("Username:", self.username)
-        form.addRow("Password:", self.password)
+        form.addRow(tr("first_admin.username"), self.username)
+        form.addRow(tr("first_admin.password"), self.password)
 
-        btn = QPushButton("Create admin")
+        btn = QPushButton(tr("first_admin.button"))
         btn.clicked.connect(self._on_create)
 
         layout = QVBoxLayout()
@@ -41,11 +42,15 @@ class CreateFirstAdminDialog(QDialog):
         u = self.username.text().strip()
         p = self.password.text()
         if not u or not p:
-            QMessageBox.warning(self, "Validation", "Username/password required.")
+            QMessageBox.warning(
+                self,
+                tr("first_admin.validation_title"),
+                tr("first_admin.validation_message"),
+            )
             return
         try:
             self._repo.create_user(u, p, "admin")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed: {e}")
+            QMessageBox.critical(self, tr("first_admin.error_title"), tr("first_admin.error_message", error=e))
             return
         self.accept()

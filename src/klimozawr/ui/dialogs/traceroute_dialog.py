@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
 )
 
+from klimozawr.ui.strings import tr
 
 class TracerouteDialog(QDialog):
     def __init__(self, title: str, output: str, parent=None) -> None:
@@ -31,8 +32,8 @@ class TracerouteDialog(QDialog):
         self.text.setPlainText(output)
         self.text.setLineWrapMode(QPlainTextEdit.NoWrap)
 
-        btn_copy = QPushButton("Скопировать")
-        btn_close = QPushButton("Закрыть")
+        btn_copy = QPushButton(tr("traceroute.button.copy"))
+        btn_close = QPushButton(tr("traceroute.button.close"))
         btn_copy.clicked.connect(self._copy)
         btn_close.clicked.connect(self.accept)
 
