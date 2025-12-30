@@ -16,14 +16,13 @@ from PySide6.QtCore import QObject, Signal, QTimer, QThreadPool, QRunnable
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog, QPushButton
 from shiboken6 import isValid
 
-from klimozawr.config import AppPaths
+from klimozawr.config import AppPaths, resource_path
 from klimozawr.core.models import Device, TickResult
 from klimozawr.core.monitor_engine import MonitorEngine
 from klimozawr.services.rotation import run_daily_rotation, RotationConfig
 from klimozawr.services.sound import SoundManager
 from klimozawr.storage.db import SQLiteDatabase
 from klimozawr.storage.repositories import UserRepo, DeviceRepo, TelemetryRepo, AlertRepo, SettingsRepo
-from klimozawr.ui.resources import resource_path
 from klimozawr.ui.dialogs.create_first_admin import CreateFirstAdminDialog
 from klimozawr.ui.dialogs.login import LoginDialog
 from klimozawr.ui.dialogs.device_editor import DeviceEditorDialog

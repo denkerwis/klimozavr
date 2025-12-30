@@ -4,8 +4,20 @@ Write-Host "== Smoke check: default WAVs via resource_path =="
 $env:PYTHONPATH = "src"
 
 $code = @'
+import os
+import sys
 from pathlib import Path
 from klimozawr.config import resource_path
+
+dist_dir = os.environ.get("KLIMOZAWR_DIST_DIR")
+if dist_dir:
+    exe = Path(dist_dir) / "klimozawr.exe"
+    if not exe.exists():
+        raise SystemExit(f"KLIMOZAWR_DIST_DIR does not contain klimozawr.exe: {exe}")
+    setattr(sys, "frozen", True)
+    if hasattr(sys, "_MEIPASS"):
+        delattr(sys, "_MEIPASS")
+    sys.executable = str(exe)
 
 required = [
     "resources/sounds/red.wav",
