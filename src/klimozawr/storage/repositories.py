@@ -112,6 +112,7 @@ class DeviceRepo:
                     icon_path=r["icon_path"],
                     icon_scale=int(r["icon_scale"]),
                     sound_down_path=r["sound_down_path"],
+                    sound_unstable_path=r["sound_unstable_path"] if "sound_unstable_path" in r.keys() else "",
                     sound_up_path=r["sound_up_path"],
                 )
             )
@@ -135,7 +136,7 @@ class DeviceRepo:
                 UPDATE devices SET
                   name=?, comment=?, location=?, owner=?,
                   yellow_to_red_secs=?, yellow_notify_after_secs=?, ping_timeout_ms=?,
-                  icon_path=?, icon_scale=?, sound_down_path=?, sound_up_path=?,
+                  icon_path=?, icon_scale=?, sound_down_path=?, sound_unstable_path=?, sound_up_path=?,
                   updated_at_utc=?
                 WHERE id=?;
                 """,
@@ -150,6 +151,7 @@ class DeviceRepo:
                     d.get("icon_path", ""),
                     int(d.get("icon_scale", 100)),
                     d.get("sound_down_path", ""),
+                    d.get("sound_unstable_path", ""),
                     d.get("sound_up_path", ""),
                     now,
                     did,
@@ -167,7 +169,7 @@ class DeviceRepo:
             INSERT INTO devices(
               ip, name, comment, location, owner,
               yellow_to_red_secs, yellow_notify_after_secs, ping_timeout_ms,
-              icon_path, icon_scale, sound_down_path, sound_up_path,
+              icon_path, icon_scale, sound_down_path, sound_unstable_path, sound_up_path,
               created_at_utc, updated_at_utc
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?);
             """,
@@ -183,6 +185,7 @@ class DeviceRepo:
                 d.get("icon_path", ""),
                 int(d.get("icon_scale", 100)),
                 d.get("sound_down_path", ""),
+                d.get("sound_unstable_path", ""),
                 d.get("sound_up_path", ""),
                 now,
                 now,
@@ -211,7 +214,7 @@ class DeviceRepo:
             UPDATE devices SET
               ip=?, name=?, comment=?, location=?, owner=?,
               yellow_to_red_secs=?, yellow_notify_after_secs=?, ping_timeout_ms=?,
-              icon_path=?, icon_scale=?, sound_down_path=?, sound_up_path=?,
+              icon_path=?, icon_scale=?, sound_down_path=?, sound_unstable_path=?, sound_up_path=?,
               updated_at_utc=?
             WHERE id=?;
             """,
@@ -227,6 +230,7 @@ class DeviceRepo:
                 d.get("icon_path", ""),
                 int(d.get("icon_scale", 100)),
                 d.get("sound_down_path", ""),
+                d.get("sound_unstable_path", ""),
                 d.get("sound_up_path", ""),
                 now,
                 int(device_id),

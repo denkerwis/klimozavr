@@ -23,6 +23,7 @@ class Device:
     icon_path: str = ""
     icon_scale: int = 100
     sound_down_path: str = ""
+    sound_unstable_path: str = ""
     sound_up_path: str = ""
 
 

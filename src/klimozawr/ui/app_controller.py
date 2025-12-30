@@ -43,6 +43,13 @@ class Session:
     role: str  # admin/user
 
 
+@dataclass
+class RepeatState:
+    last_played: datetime
+    count: int
+    episode_key: str
+
+
 class AlertSoundManager:
     def __init__(
         self,
@@ -252,9 +259,8 @@ class AppController(QObject):
         self._engine.on_resolve = self._enqueue_resolve
 
         yellow_wav = resource_path("resources/sounds/yellow.wav")
-        red_wav = resource_path("resources/sounds/critical.wav")
-        offline_wav = resource_path("resources/sounds/offline.wav")
-        self._sound = SoundManager(yellow_wav=yellow_wav, red_wav=red_wav, offline_wav=offline_wav)
+        red_wav = resource_path("resources/sounds/red.wav")
+        self._sound = SoundManager(yellow_wav=yellow_wav, red_wav=red_wav)
         self._alert_sound_manager = AlertSoundManager()
 
         self._user_win: UserMainWindow | None = None
@@ -267,11 +273,19 @@ class AppController(QObject):
         self._raw_logs_trace: dict[int, list[str]] = {}
         self._raw_mode: dict[int, str] = {}
         self._raw_log_limit = 10
-        self._critical_sound_path = resource_path("resources/sounds/critical.wav")
+        self._builtin_sounds = {
+            "up": resource_path("resources/sounds/yellow.wav"),
+            "unstable": resource_path("resources/sounds/yellow.wav"),
+            "down": resource_path("resources/sounds/red.wav"),
+            "offline": resource_path("resources/sounds/red.wav"),
+        }
+        self._critical_sound_path = self._builtin_sounds["down"]
 
         self._global_sounds = {
-            "down": self.settings.get("sound_down_path", ""),
-            "up": self.settings.get("sound_up_path", ""),
+            "up": self._get_sound_setting("default_up_wav", "sound_up_path"),
+            "unstable": self._get_sound_setting("default_unstable_wav"),
+            "down": self._get_sound_setting("default_down_wav", "sound_down_path"),
+            "offline": self._get_sound_setting("default_offline_wav"),
         }
 
         # minute aggregation buffers
@@ -293,7 +307,7 @@ class AppController(QObject):
         self._alert_repeat_timer = QTimer()
         self._alert_repeat_timer.setInterval(10 * 1000)
         self._alert_repeat_timer.timeout.connect(self._check_alert_repeats)
-        self._repeat_last_played: dict[tuple[int, str], datetime] = {}
+        self._repeat_state: dict[tuple[int, str], RepeatState] = {}
 
         self._host_offline = False
         self._host_offline_failures = 0
@@ -507,6 +521,7 @@ class AppController(QObject):
                     "icon_path": d.icon_path,
                     "icon_scale": d.icon_scale,
                     "sound_down_path": d.sound_down_path,
+                    "sound_unstable_path": d.sound_unstable_path,
                     "sound_up_path": d.sound_up_path,
                     "status": "YELLOW",
                     "unstable": False,
@@ -531,6 +546,7 @@ class AppController(QObject):
                     "icon_path": d.icon_path,
                     "icon_scale": d.icon_scale,
                     "sound_down_path": d.sound_down_path,
+                    "sound_unstable_path": d.sound_unstable_path,
                     "sound_up_path": d.sound_up_path,
                 })
 
@@ -725,7 +741,7 @@ class AppController(QObject):
         self._engine.ack_device(int(device_id), str(level).upper())
         self.alert_cleared.emit(int(alert_id))
         self.alerts_changed.emit()
-        self._repeat_last_played.pop((int(device_id), str(level).upper()), None)
+        self._repeat_state.pop((int(device_id), "DOWN" if str(level).upper() in {"RED", "DOWN"} else "UNSTABLE"), None)
 
     # --- selection/details/chart ---
     def _select_device(self, device_id: int) -> None:
@@ -874,42 +890,76 @@ class AppController(QObject):
         if getattr(self, "_host_offline", False):
             return
         now = datetime.now(timezone.utc)
-        criticals: list[tuple[int, str]] = []
+        criticals: list[tuple[int, str, str]] = []
         has_unacked_down_alerts = False
 
-        if self.session and self.session.role == "admin":
+        role = self.session.role if self.session else "user"
+        if role == "admin":
             for alert in self.alerts.list_active_alerts():
                 lvl = str(alert.get("level", "")).upper()
-                if lvl not in {"RED", "DOWN"}:
+                if lvl not in {"RED", "DOWN", "YELLOW"}:
                     continue
-                has_unacked_down_alerts = True
-                criticals.append((int(alert["device_id"]), lvl))
+                event_level = "DOWN" if lvl in {"RED", "DOWN"} else "UNSTABLE"
+                if event_level == "DOWN":
+                    has_unacked_down_alerts = True
+                started_at = str(alert.get("started_at_utc", ""))
+                episode_key = f"{event_level}:{started_at}"
+                criticals.append((int(alert["device_id"]), event_level, episode_key))
+                key = (int(alert["device_id"]), event_level)
+                if key not in self._repeat_state or self._repeat_state[key].episode_key != episode_key:
+                    last_fired = alert.get("last_fired_at_utc") or started_at
+                    try:
+                        last_dt = datetime.fromisoformat(str(last_fired))
+                    except ValueError:
+                        last_dt = now
+                    self._repeat_state[key] = RepeatState(last_played=last_dt, count=1, episode_key=episode_key)
         else:
             for did, snap in self._snapshots.items():
                 status = str(snap.get("status", "")).upper()
                 if status in {"RED", "DOWN"}:
-                    criticals.append((int(did), "RED" if status == "RED" else "DOWN"))
+                    st = self._engine.get_state(int(did))
+                    episode_key = st.red_start_utc.isoformat() if st and st.red_start_utc else ""
+                    criticals.append((int(did), "DOWN", episode_key))
+                    key = (int(did), "DOWN")
+                    if key not in self._repeat_state or self._repeat_state[key].episode_key != episode_key:
+                        seed = st.red_start_utc if st and st.red_start_utc else now
+                        self._repeat_state[key] = RepeatState(last_played=seed, count=1, episode_key=episode_key)
 
-        role = self.session.role if self.session else "user"
         if self._alert_sound_manager.maybe_repeat_mass_down(
             role=role,
             now=now,
             has_unacked_down_alerts=has_unacked_down_alerts,
-            play_mass=lambda: QTimer.singleShot(0, lambda: self._sound.play("RED")),
+            play_mass=lambda: QTimer.singleShot(
+                0,
+                lambda: self._sound.play_path(
+                    self._select_sound_path_chain(
+                        self._global_sounds.get("down", ""),
+                        fallback=self._builtin_sounds["down"],
+                    ),
+                    volume=1.0,
+                ),
+            ),
         ):
             return
         if self._alert_sound_manager.mass_down_active():
             return
 
-        active = set(criticals)
-        for key in list(self._repeat_last_played.keys()):
+        active = {(device_id, level) for device_id, level, _ in criticals}
+        for key in list(self._repeat_state.keys()):
             if key not in active:
-                self._repeat_last_played.pop(key, None)
+                self._repeat_state.pop(key, None)
 
-        for device_id, level in criticals:
-            last = self._repeat_last_played.get((device_id, level))
-            if not last or (now - last) >= timedelta(minutes=5):
-                self._repeat_last_played[(device_id, level)] = now
+        for device_id, level, episode_key in criticals:
+            key = (device_id, level)
+            state = self._repeat_state.get(key)
+            if state is None or state.episode_key != episode_key:
+                state = RepeatState(last_played=now, count=1, episode_key=episode_key)
+                self._repeat_state[key] = state
+            if role != "admin" and state.count >= 2:
+                continue
+            if (now - state.last_played) >= timedelta(minutes=5):
+                state.last_played = now
+                state.count += 1
                 logger.info("sound repeat device=%s level=%s", device_id, level)
                 QTimer.singleShot(0, lambda did=device_id, lvl=level: self._play_alert_sound(did, lvl))
 
@@ -958,7 +1008,11 @@ class AppController(QObject):
         if self._admin_win:
             self._admin_win.set_host_offline_visible(offline)
         if offline:
-            self._sound.play_offline()
+            offline_path = self._select_sound_path_chain(
+                self._global_sounds.get("offline", ""),
+                fallback=self._builtin_sounds["offline"],
+            )
+            self._sound.play_path(offline_path, volume=1.0)
         else:
             self._refresh_cards_everywhere()
 
@@ -969,13 +1023,25 @@ class AppController(QObject):
         volume = 0.9
         if status == "GREEN":
             event_type = "UP"
-            path = snap.get("sound_up_path") or self._global_sounds.get("up")
+            path = self._select_sound_path_chain(
+                snap.get("sound_up_path", ""),
+                self._global_sounds.get("up", ""),
+                fallback=self._builtin_sounds["up"],
+            )
         elif status == "YELLOW":
             event_type = "UNSTABLE"
-            path = snap.get("sound_down_path") or self._global_sounds.get("down") or self._critical_sound_path
+            path = self._select_sound_path_chain(
+                snap.get("sound_unstable_path", ""),
+                self._global_sounds.get("unstable", ""),
+                fallback=self._builtin_sounds["unstable"],
+            )
         elif status in {"RED", "DOWN"}:
             event_type = "DOWN"
-            path = snap.get("sound_down_path") or self._global_sounds.get("down") or self._critical_sound_path
+            path = self._select_sound_path_chain(
+                snap.get("sound_down_path", ""),
+                self._global_sounds.get("down", ""),
+                fallback=self._builtin_sounds["down"],
+            )
             volume = 1.0
         else:
             path = None
@@ -983,10 +1049,9 @@ class AppController(QObject):
         if not event_type:
             return
 
-        mass_path = (
-            self._global_sounds.get("up")
-            if event_type == "UP"
-            else self._global_sounds.get("down") or self._critical_sound_path
+        mass_path = self._select_sound_path_chain(
+            self._global_sounds.get(event_type.lower(), ""),
+            fallback=self._builtin_sounds.get(event_type.lower(), self._builtin_sounds["down"]),
         )
         now = ts_utc or datetime.now(timezone.utc)
 
@@ -1020,18 +1085,36 @@ class AppController(QObject):
             return
         event_type = "DOWN" if level in {"RED", "DOWN"} else "UNSTABLE"
         now = ts_utc or datetime.now(timezone.utc)
+        snap = self._snapshots.get(int(device_id), {})
+        volume = 1.0 if event_type == "DOWN" else 0.9
+        if event_type == "DOWN":
+            path = self._select_sound_path_chain(
+                snap.get("sound_down_path", ""),
+                self._global_sounds.get("down", ""),
+                fallback=self._builtin_sounds["down"],
+            )
+        else:
+            path = self._select_sound_path_chain(
+                snap.get("sound_unstable_path", ""),
+                self._global_sounds.get("unstable", ""),
+                fallback=self._builtin_sounds["unstable"],
+            )
+        mass_path = self._select_sound_path_chain(
+            self._global_sounds.get(event_type.lower(), ""),
+            fallback=self._builtin_sounds.get(event_type.lower(), self._builtin_sounds["down"]),
+        )
 
         def play_single() -> None:
             logger.info("sound alert play device=%s level=%s", device_id, level)
-            self._sound.play("RED" if level == "DOWN" else level)
+            self._sound.play_path(str(path), volume=volume)
 
         self._alert_sound_manager.handle_event(
             event_type=event_type,
             device_id=int(device_id),
             now=now,
             play_single=play_single,
-            play_mass=play_single,
-            sound_label=level,
+            play_mass=lambda: self._sound.play_path(str(mass_path), volume=volume),
+            sound_label=str(path or mass_path),
             source="alert",
         )
 
@@ -1175,20 +1258,38 @@ class AppController(QObject):
 
     def open_settings(self) -> None:
         initial = {
-            "sound_down_path": self.settings.get("sound_down_path", ""),
-            "sound_up_path": self.settings.get("sound_up_path", ""),
+            "default_up_wav": self._resolve_sound_path(
+                self._get_sound_setting("default_up_wav", "sound_up_path")
+            ),
+            "default_unstable_wav": self._resolve_sound_path(self._get_sound_setting("default_unstable_wav")),
+            "default_down_wav": self._resolve_sound_path(
+                self._get_sound_setting("default_down_wav", "sound_down_path")
+            ),
+            "default_offline_wav": self._resolve_sound_path(self._get_sound_setting("default_offline_wav")),
         }
         dlg = SettingsDialog(initial=initial, parent=self._admin_win)
         if dlg.exec() != QDialog.Accepted:
             return
         payload = dlg.payload()
-        down = self._save_asset(payload.get("sound_down_path", ""), "sounds")
-        up = self._save_asset(payload.get("sound_up_path", ""), "sounds")
-        self.settings.set("sound_down_path", down)
-        self.settings.set("sound_up_path", up)
-        self._global_sounds["down"] = down
+        up = self._save_asset(payload.get("default_up_wav", ""), "sounds")
+        unstable = self._save_asset(payload.get("default_unstable_wav", ""), "sounds")
+        down = self._save_asset(payload.get("default_down_wav", ""), "sounds")
+        offline = self._save_asset(payload.get("default_offline_wav", ""), "sounds")
+        self.settings.set("default_up_wav", up)
+        self.settings.set("default_unstable_wav", unstable)
+        self.settings.set("default_down_wav", down)
+        self.settings.set("default_offline_wav", offline)
         self._global_sounds["up"] = up
-        logger.info("UI: settings updated global sounds down=%s up=%s", down, up)
+        self._global_sounds["unstable"] = unstable
+        self._global_sounds["down"] = down
+        self._global_sounds["offline"] = offline
+        logger.info(
+            "UI: settings updated global sounds up=%s unstable=%s down=%s offline=%s",
+            up,
+            unstable,
+            down,
+            offline,
+        )
         QMessageBox.information(
             self._admin_win,
             _t("dialog.settings_saved_title"),
@@ -1198,16 +1299,19 @@ class AppController(QObject):
     def _prepare_device_payload(self, payload: dict) -> dict:
         icon = self._save_asset(payload.get("icon_path", ""), "icons")
         down = self._save_asset(payload.get("sound_down_path", ""), "sounds")
+        unstable = self._save_asset(payload.get("sound_unstable_path", ""), "sounds")
         up = self._save_asset(payload.get("sound_up_path", ""), "sounds")
         new_payload = dict(payload)
         new_payload["icon_path"] = icon
         new_payload["sound_down_path"] = down
+        new_payload["sound_unstable_path"] = unstable
         new_payload["sound_up_path"] = up
         logger.info(
-            "UI: apply per-host settings icon=%s scale=%s down=%s up=%s",
+            "UI: apply per-host settings icon=%s scale=%s down=%s unstable=%s up=%s",
             icon,
             payload.get("icon_scale", 100),
             down,
+            unstable,
             up,
         )
         return new_payload
@@ -1216,9 +1320,14 @@ class AppController(QObject):
         if not path:
             return ""
         src = Path(path)
+        if not src.is_absolute() and bucket == "sounds":
+            src = self.paths.data_dir / src
         if not src.exists():
             return ""
-        dest_dir = self.paths.data_dir / "assets" / bucket
+        if bucket == "sounds":
+            dest_dir = self.paths.data_dir / "sounds_custom"
+        else:
+            dest_dir = self.paths.data_dir / "assets" / bucket
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / src.name
         if dest.exists() and dest.resolve() != src.resolve():
@@ -1227,10 +1336,39 @@ class AppController(QObject):
         try:
             if dest.resolve() != src.resolve():
                 shutil.copy2(src, dest)
+            if bucket == "sounds":
+                return str(dest.relative_to(self.paths.data_dir))
             return str(dest)
         except Exception:
             logger.exception("failed to store asset %s", src)
             return str(src)
+
+    def _get_sound_setting(self, key: str, *fallback_keys: str) -> str:
+        value = self.settings.get(key, "")
+        if value:
+            return value
+        for fallback in fallback_keys:
+            value = self.settings.get(fallback, "")
+            if value:
+                return value
+        return ""
+
+    def _select_sound_path_chain(self, *candidates: str, fallback: Path) -> str:
+        for candidate in candidates:
+            resolved = self._resolve_sound_path(candidate)
+            if resolved:
+                return resolved
+        return str(fallback)
+
+    def _resolve_sound_path(self, raw: str) -> str:
+        if not raw:
+            return ""
+        path = Path(raw)
+        if not path.is_absolute():
+            path = self.paths.data_dir / path
+        if path.exists():
+            return str(path)
+        return ""
 
     def _refresh_admin_lists(self) -> None:
         if not self._admin_win:
