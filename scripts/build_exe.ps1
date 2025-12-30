@@ -21,9 +21,6 @@ $installTarget = if ($hasGuiExtra) { ".[gui]" } else { "." }
 & $py -m pip install -e $installTarget
 & $py -m pip install pyinstaller
 
-# ensure wavs exist
-& $py (Join-Path $repoRoot "tools\generate_wavs.py")
-
 Write-Host "== Building EXE with PyInstaller (onedir) =="
 & $py -m PyInstaller (Join-Path $repoRoot "klimozawr.spec") --noconfirm --clean
 

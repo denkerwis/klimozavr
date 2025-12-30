@@ -16,8 +16,9 @@ From the repository root:
 The script will:
 1. Create `.venv` if missing
 2. Install dependencies
-3. Generate required WAV assets
-4. Run PyInstaller using `klimozawr.spec`
+3. Run PyInstaller using `klimozawr.spec`
+
+Build **does not generate audio**. If WAV files are missing in `resources/`, the app uses a fallback at runtime and the build still succeeds.
 
 Output is placed in:
 ```
