@@ -10,6 +10,7 @@ import platform
 import shutil
 import subprocess
 import threading
+from collections.abc import Callable
 
 from PySide6.QtCore import QObject, Signal, QTimer
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog, QPushButton
@@ -40,6 +41,171 @@ class Session:
     user_id: int
     username: str
     role: str  # admin/user
+
+
+class AlertSoundManager:
+    def __init__(
+        self,
+        *,
+        burst_window_sec: int = 20,
+        burst_threshold: int = 2,
+        cooldown_sec_down: int = 60,
+        cooldown_sec_unstable: int = 30,
+        cooldown_sec_up: int = 10,
+    ) -> None:
+        self._burst_window = timedelta(seconds=burst_window_sec)
+        self._burst_threshold = burst_threshold
+        self._cooldowns = {
+            "DOWN": timedelta(seconds=cooldown_sec_down),
+            "UNSTABLE": timedelta(seconds=cooldown_sec_unstable),
+            "UP": timedelta(seconds=cooldown_sec_up),
+        }
+        self._history: dict[str, list[tuple[datetime, int]]] = {
+            "DOWN": [],
+            "UNSTABLE": [],
+            "UP": [],
+        }
+        self._cooldown_until: dict[str, datetime] = {}
+        self._host_offline = False
+        self._active_down_devices: set[int] = set()
+        self._mass_down_active = False
+        self._mass_down_play_count = 0
+        self._mass_down_last_played: datetime | None = None
+
+    def set_host_offline(self, offline: bool) -> None:
+        self._host_offline = offline
+        if offline:
+            self._history = {key: [] for key in self._history}
+            self._cooldown_until.clear()
+            self._active_down_devices.clear()
+            self._mass_down_active = False
+            self._mass_down_play_count = 0
+            self._mass_down_last_played = None
+
+    def update_device_status(self, device_id: int, status: str) -> None:
+        status = str(status).upper()
+        if status in {"RED", "DOWN"}:
+            self._active_down_devices.add(int(device_id))
+        else:
+            self._active_down_devices.discard(int(device_id))
+        if self._mass_down_active and not self._active_down_devices:
+            logger.info("sound mass down ended (all devices recovered)")
+            self._mass_down_active = False
+            self._mass_down_play_count = 0
+            self._mass_down_last_played = None
+
+    def mass_down_active(self) -> bool:
+        return self._mass_down_active
+
+    def handle_event(
+        self,
+        *,
+        event_type: str,
+        device_id: int,
+        now: datetime,
+        play_single: Callable[[], None],
+        play_mass: Callable[[], None],
+        sound_label: str,
+        source: str,
+    ) -> str:
+        if self._host_offline:
+            logger.info("sound suppressed host_offline event=%s device=%s source=%s", event_type, device_id, source)
+            return "suppressed_host_offline"
+
+        if event_type in {"UNSTABLE", "UP"} and self._cooldown_active("DOWN", now):
+            logger.info(
+                "sound suppressed down cooldown event=%s device=%s source=%s", event_type, device_id, source
+            )
+            return "suppressed_down_cooldown"
+
+        if self._cooldown_active(event_type, now):
+            logger.info("sound suppressed cooldown event=%s device=%s source=%s", event_type, device_id, source)
+            return "suppressed_cooldown"
+
+        if event_type == "DOWN" and self._mass_down_active:
+            logger.info("sound suppressed mass_down_active device=%s source=%s", device_id, source)
+            return "suppressed_mass_active"
+
+        history = self._history.setdefault(event_type, [])
+        self._prune_history(history, now)
+        history.append((now, int(device_id)))
+        burst_count = len({did for ts, did in history if (now - ts) <= self._burst_window})
+
+        if burst_count >= self._burst_threshold:
+            self._set_cooldown(event_type, now)
+            if event_type == "DOWN":
+                self._mass_down_active = True
+                self._mass_down_play_count = 1
+                self._mass_down_last_played = now
+            logger.info(
+                "sound mass event=%s device=%s burst_count=%s cooldown_until=%s sound=%s source=%s",
+                event_type,
+                device_id,
+                burst_count,
+                self._cooldown_until.get(event_type),
+                sound_label,
+                source,
+            )
+            play_mass()
+            return "mass"
+
+        logger.info(
+            "sound single event=%s device=%s sound=%s source=%s",
+            event_type,
+            device_id,
+            sound_label,
+            source,
+        )
+        play_single()
+        return "single"
+
+    def maybe_repeat_mass_down(
+        self,
+        *,
+        role: str,
+        now: datetime,
+        has_unacked_down_alerts: bool,
+        play_mass: Callable[[], None],
+    ) -> bool:
+        if not self._mass_down_active:
+            return False
+        if role == "admin":
+            if not has_unacked_down_alerts:
+                return True
+            last = self._mass_down_last_played
+            if last and (now - last) < timedelta(minutes=5):
+                return True
+        else:
+            if self._mass_down_play_count >= 2:
+                return True
+            last = self._mass_down_last_played
+            if last and (now - last) < timedelta(minutes=5):
+                return True
+
+        self._mass_down_play_count += 1
+        self._mass_down_last_played = now
+        logger.info(
+            "sound mass down repeat role=%s count=%s at=%s",
+            role,
+            self._mass_down_play_count,
+            now.isoformat(),
+        )
+        play_mass()
+        return True
+
+    def _cooldown_active(self, event_type: str, now: datetime) -> bool:
+        until = self._cooldown_until.get(event_type)
+        return bool(until and now < until)
+
+    def _set_cooldown(self, event_type: str, now: datetime) -> None:
+        cooldown = self._cooldowns.get(event_type)
+        if cooldown:
+            self._cooldown_until[event_type] = now + cooldown
+
+    def _prune_history(self, history: list[tuple[datetime, int]], now: datetime) -> None:
+        cutoff = now - self._burst_window
+        while history and history[0][0] < cutoff:
+            history.pop(0)
 
 
 class AppController(QObject):
@@ -89,6 +255,7 @@ class AppController(QObject):
         red_wav = resource_path("resources/sounds/critical.wav")
         offline_wav = resource_path("resources/sounds/offline.wav")
         self._sound = SoundManager(yellow_wav=yellow_wav, red_wav=red_wav, offline_wav=offline_wav)
+        self._alert_sound_manager = AlertSoundManager()
 
         self._user_win: UserMainWindow | None = None
         self._admin_win: AdminMainWindow | None = None
@@ -420,6 +587,8 @@ class AppController(QObject):
         if st and effective_status != "GREEN" and getattr(st, "red_start_utc", None):
             effective_status = "RED"
 
+        self._alert_sound_manager.update_device_status(tick.device_id, effective_status)
+
         # transition events + alert resolution logic
         if st and st.current_status:
             snap = self._snapshots.get(tick.device_id)
@@ -429,7 +598,7 @@ class AppController(QObject):
                 self.telemetry.insert_event(
                     tick.ts_utc, tick.device_id, "status_transition", f"{prev}->{effective_status}"
                 )
-                self._play_status_sound(tick.device_id, effective_status)
+                self._play_status_sound(tick.device_id, effective_status, tick.ts_utc)
 
             # resolve alerts when green
             if effective_status == "GREEN":
@@ -544,7 +713,7 @@ class AppController(QObject):
         if self._sound_book.get(sound_key) != started:
             self._sound_book[sound_key] = started
             logger.info("sound play device=%s level=%s started_at=%s", device_id, level, started)
-            QTimer.singleShot(0, lambda lvl=level: self._sound.play(lvl))
+            QTimer.singleShot(0, lambda did=device_id, lvl=level: self._play_alert_sound(did, lvl))
 
         # ✅ теперь UI получает событие сразу
         self.alert_fired.emit(payload)
@@ -706,18 +875,31 @@ class AppController(QObject):
             return
         now = datetime.now(timezone.utc)
         criticals: list[tuple[int, str]] = []
+        has_unacked_down_alerts = False
 
         if self.session and self.session.role == "admin":
             for alert in self.alerts.list_active_alerts():
                 lvl = str(alert.get("level", "")).upper()
                 if lvl not in {"RED", "DOWN"}:
                     continue
+                has_unacked_down_alerts = True
                 criticals.append((int(alert["device_id"]), lvl))
         else:
             for did, snap in self._snapshots.items():
                 status = str(snap.get("status", "")).upper()
                 if status in {"RED", "DOWN"}:
                     criticals.append((int(did), "RED" if status == "RED" else "DOWN"))
+
+        role = self.session.role if self.session else "user"
+        if self._alert_sound_manager.maybe_repeat_mass_down(
+            role=role,
+            now=now,
+            has_unacked_down_alerts=has_unacked_down_alerts,
+            play_mass=lambda: QTimer.singleShot(0, lambda: self._sound.play("RED")),
+        ):
+            return
+        if self._alert_sound_manager.mass_down_active():
+            return
 
         active = set(criticals)
         for key in list(self._repeat_last_played.keys()):
@@ -729,7 +911,7 @@ class AppController(QObject):
             if not last or (now - last) >= timedelta(minutes=5):
                 self._repeat_last_played[(device_id, level)] = now
                 logger.info("sound repeat device=%s level=%s", device_id, level)
-                QTimer.singleShot(0, lambda lvl=level: self._sound.play("RED" if lvl == "DOWN" else lvl))
+                QTimer.singleShot(0, lambda did=device_id, lvl=level: self._play_alert_sound(did, lvl))
 
     def _schedule_host_check(self) -> None:
         if self._host_check_inflight:
@@ -768,6 +950,7 @@ class AppController(QObject):
         if self._host_offline == offline:
             return
         self._host_offline = offline
+        self._alert_sound_manager.set_host_offline(offline)
         logger.info("host connectivity offline=%s", offline)
         self._engine.set_paused(offline)
         if self._user_win:
@@ -779,23 +962,78 @@ class AppController(QObject):
         else:
             self._refresh_cards_everywhere()
 
-    def _play_status_sound(self, device_id: int, status: str) -> None:
+    def _play_status_sound(self, device_id: int, status: str, ts_utc: datetime | None = None) -> None:
         snap = self._snapshots.get(int(device_id), {})
         status = status.upper()
+        event_type = None
         volume = 0.9
         if status == "GREEN":
+            event_type = "UP"
             path = snap.get("sound_up_path") or self._global_sounds.get("up")
-        elif status in {"YELLOW", "RED", "DOWN"}:
+        elif status == "YELLOW":
+            event_type = "UNSTABLE"
             path = snap.get("sound_down_path") or self._global_sounds.get("down") or self._critical_sound_path
-            if status in {"RED", "DOWN"}:
-                volume = 1.0
+        elif status in {"RED", "DOWN"}:
+            event_type = "DOWN"
+            path = snap.get("sound_down_path") or self._global_sounds.get("down") or self._critical_sound_path
+            volume = 1.0
         else:
             path = None
-        if path:
+
+        if not event_type:
+            return
+
+        mass_path = (
+            self._global_sounds.get("up")
+            if event_type == "UP"
+            else self._global_sounds.get("down") or self._critical_sound_path
+        )
+        now = ts_utc or datetime.now(timezone.utc)
+
+        def play_single() -> None:
+            if not path:
+                logger.info("sound not configured device=%s status=%s", device_id, status)
+                return
             logger.info("sound play device=%s status=%s path=%s", device_id, status, path)
             self._sound.play_path(str(path), volume=volume)
-        else:
-            logger.info("sound not configured device=%s status=%s", device_id, status)
+
+        def play_mass() -> None:
+            if not mass_path:
+                logger.info("sound mass not configured event=%s", event_type)
+                return
+            logger.info("sound play mass event=%s path=%s", event_type, mass_path)
+            self._sound.play_path(str(mass_path), volume=volume)
+
+        self._alert_sound_manager.handle_event(
+            event_type=event_type,
+            device_id=int(device_id),
+            now=now,
+            play_single=play_single,
+            play_mass=play_mass,
+            sound_label=str(path or mass_path),
+            source="status",
+        )
+
+    def _play_alert_sound(self, device_id: int, level: str, ts_utc: datetime | None = None) -> None:
+        level = str(level).upper()
+        if level not in {"YELLOW", "RED", "DOWN"}:
+            return
+        event_type = "DOWN" if level in {"RED", "DOWN"} else "UNSTABLE"
+        now = ts_utc or datetime.now(timezone.utc)
+
+        def play_single() -> None:
+            logger.info("sound alert play device=%s level=%s", device_id, level)
+            self._sound.play("RED" if level == "DOWN" else level)
+
+        self._alert_sound_manager.handle_event(
+            event_type=event_type,
+            device_id=int(device_id),
+            now=now,
+            play_single=play_single,
+            play_mass=play_single,
+            sound_label=level,
+            source="alert",
+        )
 
     def _to_local(self, ts_utc: datetime | None) -> datetime | None:
         if not ts_utc:
