@@ -30,6 +30,7 @@ class MonitorEngine:
         self._states: dict[int, DeviceRuntimeState] = {}
 
         self._stop = threading.Event()
+        self._paused = threading.Event()
         self._thread: threading.Thread | None = None
         self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ping")
 
@@ -63,6 +64,7 @@ class MonitorEngine:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self._paused.clear()
         self._thread = threading.Thread(target=self._run, name="MonitorEngine", daemon=True)
         self._thread.start()
 
@@ -71,6 +73,12 @@ class MonitorEngine:
         if self._thread:
             self._thread.join(timeout=2.0)
         self._pool.shutdown(wait=False, cancel_futures=True)
+
+    def set_paused(self, paused: bool) -> None:
+        if paused:
+            self._paused.set()
+        else:
+            self._paused.clear()
 
     def _run(self) -> None:
         logger.info("engine started")
@@ -84,6 +92,12 @@ class MonitorEngine:
                 if nowp < next_tick:
                     time.sleep(min(0.05, next_tick - nowp))
                     self._drain_futures()
+                    continue
+
+                if self._paused.is_set():
+                    self._drain_futures()
+                    next_tick = time.perf_counter() + 1.0
+                    time.sleep(0.2)
                     continue
 
                 next_tick += 1.0

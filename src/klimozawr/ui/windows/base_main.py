@@ -4,11 +4,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMainWindow, QMessageBox
 
 from klimozawr.ui.strings import tr
+from klimozawr.ui.widgets.host_offline_overlay import HostOfflineOverlay
 
 class BaseMainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._allow_close = False
+        self._host_overlay = HostOfflineOverlay(self)
+        self._host_overlay.hide()
         self.setWindowTitle(tr("app.title"))
         self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
@@ -33,3 +36,16 @@ class BaseMainWindow(QMainWindow):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self.showFullScreen()
+        self._host_overlay.sync_geometry()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._host_overlay.sync_geometry()
+
+    def set_host_offline_visible(self, visible: bool) -> None:
+        if visible:
+            self._host_overlay.sync_geometry()
+            self._host_overlay.show()
+            self._host_overlay.raise_()
+        else:
+            self._host_overlay.hide()

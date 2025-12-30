@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import locale
 import logging
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -84,8 +86,9 @@ class AppController(QObject):
         self._engine.on_resolve = self._enqueue_resolve
 
         yellow_wav = resource_path("resources/sounds/yellow.wav")
-        red_wav = resource_path("resources/sounds/red.wav")
-        self._sound = SoundManager(yellow_wav=yellow_wav, red_wav=red_wav)
+        red_wav = resource_path("resources/sounds/critical.wav")
+        offline_wav = resource_path("resources/sounds/offline.wav")
+        self._sound = SoundManager(yellow_wav=yellow_wav, red_wav=red_wav, offline_wav=offline_wav)
 
         self._user_win: UserMainWindow | None = None
         self._admin_win: AdminMainWindow | None = None
@@ -93,8 +96,11 @@ class AppController(QObject):
 
         # snapshots for UI cards
         self._snapshots: dict[int, dict] = {}
-        self._raw_logs: dict[int, list[str]] = {}
+        self._raw_logs_ping: dict[int, list[str]] = {}
+        self._raw_logs_trace: dict[int, list[str]] = {}
+        self._raw_mode: dict[int, str] = {}
         self._raw_log_limit = 10
+        self._critical_sound_path = resource_path("resources/sounds/critical.wav")
 
         self._global_sounds = {
             "down": self.settings.get("sound_down_path", ""),
@@ -117,6 +123,19 @@ class AppController(QObject):
         self._chart_timer.setInterval(10 * 1000)
         self._chart_timer.timeout.connect(self._refresh_selected_chart)
 
+        self._alert_repeat_timer = QTimer()
+        self._alert_repeat_timer.setInterval(10 * 1000)
+        self._alert_repeat_timer.timeout.connect(self._check_alert_repeats)
+        self._repeat_last_played: dict[tuple[int, str], datetime] = {}
+
+        self._host_offline = False
+        self._host_offline_failures = 0
+        self._host_offline_threshold = 3
+        self._host_check_inflight = False
+        self._host_check_timer = QTimer()
+        self._host_check_timer.setInterval(7 * 1000)
+        self._host_check_timer.timeout.connect(self._schedule_host_check)
+
     def start(self) -> None:
         # first-run admin
         if self.users.count_users() == 0:
@@ -130,6 +149,8 @@ class AppController(QObject):
         self._engine.start()
         self._rotation_timer.start()
         self._chart_timer.start()
+        self._alert_repeat_timer.start()
+        self._host_check_timer.start()
         self._maybe_rotate()
 
         self._show_login()
@@ -254,6 +275,8 @@ class AppController(QObject):
             win.details.traceroute_requested.connect(self.run_traceroute_selected)
             win.details.export_selected_requested.connect(self.export_selected_logs)
             win.details.export_all_requested.connect(self.export_all_logs)
+        if hasattr(win, "set_host_offline_visible"):
+            win.set_host_offline_visible(self._host_offline)
 
     def _wire_admin_window(self, win: AdminMainWindow) -> None:
         # --- inject Refresh button into admin UI (without touching admin_main.py) ---
@@ -383,6 +406,8 @@ class AppController(QObject):
         QTimer.singleShot(0, _update)
 
     def _on_tick_from_engine(self, tick: TickResult) -> None:
+        if self._host_offline:
+            return
         # store raw tick
         self.telemetry.insert_tick(tick)
 
@@ -428,16 +453,18 @@ class AppController(QObject):
             s["rtt_last_ms"] = tick.rtt_last_ms
             s["last_tick_utc"] = tick.ts_utc
 
-        self._append_raw_log(
-            tick.device_id,
-            _t(
-                "raw.status_line",
-                time=self._format_time_local(tick.ts_utc),
-                status=status_display(effective_status),
-                loss=tick.loss_pct,
-                rtt=tick.rtt_last_ms or _t("placeholder.na"),
-            ),
-        )
+        if self._raw_mode.get(int(tick.device_id), "ping") != "trace":
+            self._append_raw_log(
+                tick.device_id,
+                _t(
+                    "raw.status_line",
+                    time=self._format_time_local(tick.ts_utc),
+                    status=status_display(effective_status),
+                    loss=tick.loss_pct,
+                    rtt=tick.rtt_last_ms or _t("placeholder.na"),
+                ),
+                mode="ping",
+            )
 
         # minute aggregation (simple in-app, best-effort)
         self._aggregate_minute(tick)
@@ -453,6 +480,8 @@ class AppController(QObject):
                 self._update_details_panel(tick.device_id)
 
     def _on_alert_from_engine(self, device_id: int, level: str) -> None:
+        if self._host_offline:
+            return
         st = self._engine.get_state(device_id)
         if not st:
             return
@@ -527,6 +556,7 @@ class AppController(QObject):
         self._engine.ack_device(int(device_id), str(level).upper())
         self.alert_cleared.emit(int(alert_id))
         self.alerts_changed.emit()
+        self._repeat_last_played.pop((int(device_id), str(level).upper()), None)
 
     # --- selection/details/chart ---
     def _select_device(self, device_id: int) -> None:
@@ -614,7 +644,12 @@ class AppController(QObject):
         last_txt = win.details.format_timestamp(last_tick)
         elapsed_txt = self._format_elapsed(device_id, status)
 
-        raw_lines = self._raw_logs.get(int(device_id), [])
+        raw_mode = self._raw_mode.get(int(device_id), "ping")
+        raw_lines = (
+            self._raw_logs_trace.get(int(device_id), [])
+            if raw_mode == "trace"
+            else self._raw_logs_ping.get(int(device_id), [])
+        )
         raw_tail = raw_lines[-self._raw_log_limit :]
 
         win.details.set_device_details(
@@ -657,24 +692,108 @@ class AppController(QObject):
             return f"{min_}{_t('unit.minute_short')} {sec}{_t('unit.second_short')}"
         return f"{sec}{_t('unit.second_short')}"
 
-    def _append_raw_log(self, device_id: int, line: str) -> None:
-        buf = self._raw_logs.setdefault(int(device_id), [])
+    def _append_raw_log(self, device_id: int, line: str, *, mode: str = "ping") -> None:
+        if mode == "trace":
+            buf = self._raw_logs_trace.setdefault(int(device_id), [])
+        else:
+            buf = self._raw_logs_ping.setdefault(int(device_id), [])
         buf.append(str(line))
         if len(buf) > self._raw_log_limit * 3:
             del buf[: len(buf) - self._raw_log_limit * 3]
 
+    def _check_alert_repeats(self) -> None:
+        if getattr(self, "_host_offline", False):
+            return
+        now = datetime.now(timezone.utc)
+        criticals: list[tuple[int, str]] = []
+
+        if self.session and self.session.role == "admin":
+            for alert in self.alerts.list_active_alerts():
+                lvl = str(alert.get("level", "")).upper()
+                if lvl not in {"RED", "DOWN"}:
+                    continue
+                criticals.append((int(alert["device_id"]), lvl))
+        else:
+            for did, snap in self._snapshots.items():
+                status = str(snap.get("status", "")).upper()
+                if status in {"RED", "DOWN"}:
+                    criticals.append((int(did), "RED" if status == "RED" else "DOWN"))
+
+        active = set(criticals)
+        for key in list(self._repeat_last_played.keys()):
+            if key not in active:
+                self._repeat_last_played.pop(key, None)
+
+        for device_id, level in criticals:
+            last = self._repeat_last_played.get((device_id, level))
+            if not last or (now - last) >= timedelta(minutes=5):
+                self._repeat_last_played[(device_id, level)] = now
+                logger.info("sound repeat device=%s level=%s", device_id, level)
+                QTimer.singleShot(0, lambda lvl=level: self._sound.play("RED" if lvl == "DOWN" else lvl))
+
+    def _schedule_host_check(self) -> None:
+        if self._host_check_inflight:
+            return
+        self._host_check_inflight = True
+
+        def _worker() -> None:
+            ok_primary = self._try_host_connect("1.1.1.1", 443)
+            ok_secondary = self._try_host_connect("8.8.8.8", 443)
+            QTimer.singleShot(0, lambda: self._apply_host_check_result(ok_primary, ok_secondary))
+
+        threading.Thread(target=_worker, name="host_check", daemon=True).start()
+
+    def _try_host_connect(self, host: str, port: int) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=1.2):
+                return True
+        except OSError:
+            return False
+
+    def _apply_host_check_result(self, ok_primary: bool, ok_secondary: bool) -> None:
+        self._host_check_inflight = False
+        if not ok_primary and not ok_secondary:
+            self._host_offline_failures += 1
+        else:
+            self._host_offline_failures = 0
+
+        if self._host_offline and (ok_primary or ok_secondary):
+            self._set_host_offline(False)
+            return
+
+        if not self._host_offline and self._host_offline_failures >= self._host_offline_threshold:
+            self._set_host_offline(True)
+
+    def _set_host_offline(self, offline: bool) -> None:
+        if self._host_offline == offline:
+            return
+        self._host_offline = offline
+        logger.info("host connectivity offline=%s", offline)
+        self._engine.set_paused(offline)
+        if self._user_win:
+            self._user_win.set_host_offline_visible(offline)
+        if self._admin_win:
+            self._admin_win.set_host_offline_visible(offline)
+        if offline:
+            self._sound.play_offline()
+        else:
+            self._refresh_cards_everywhere()
+
     def _play_status_sound(self, device_id: int, status: str) -> None:
         snap = self._snapshots.get(int(device_id), {})
         status = status.upper()
+        volume = 0.9
         if status == "GREEN":
             path = snap.get("sound_up_path") or self._global_sounds.get("up")
         elif status in {"YELLOW", "RED", "DOWN"}:
-            path = snap.get("sound_down_path") or self._global_sounds.get("down")
+            path = snap.get("sound_down_path") or self._global_sounds.get("down") or self._critical_sound_path
+            if status in {"RED", "DOWN"}:
+                volume = 1.0
         else:
             path = None
         if path:
             logger.info("sound play device=%s status=%s path=%s", device_id, status, path)
-            self._sound.play_path(str(path))
+            self._sound.play_path(str(path), volume=volume)
         else:
             logger.info("sound not configured device=%s status=%s", device_id, status)
 
@@ -720,28 +839,54 @@ class AppController(QObject):
             )
             return
         logger.info("UI: traceroute start device_id=%s target=%s", did, target)
+        self._raw_mode[int(did)] = "trace"
+        self._raw_logs_trace[int(did)] = []
+        self._append_raw_log(did, _t("raw.traceroute_start", target=target), mode="trace")
+        self._update_details_panel(int(did))
 
         def _worker() -> None:
-            cmd = ["tracert", "-d", target] if platform.system().lower() == "windows" else ["traceroute", target]
+            cmd = ["tracert", "-d", "-w", "1000", "-h", "30", target] if platform.system().lower() == "windows" else ["traceroute", target]
+            output_lines: list[str] = []
             try:
-                res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-                if res.returncode != 0:
-                    logger.warning("traceroute non-zero exit code=%s target=%s", res.returncode, target)
-                output = res.stdout.strip() or res.stderr.strip()
+                encoding = locale.getpreferredencoding(False) if platform.system().lower() == "windows" else "utf-8"
+                if platform.system().lower() == "windows" and not encoding:
+                    encoding = "cp866"
+                logger.info("traceroute spawn target=%s cmd=%s encoding=%s", target, cmd, encoding)
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding=encoding,
+                    errors="replace",
+                )
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    line = line.rstrip("\r\n")
+                    output_lines.append(line)
+                    self._append_raw_log(did, line, mode="trace")
+                    if self._selected_device_id == did:
+                        QTimer.singleShot(0, lambda _did=did: self._update_details_panel(int(_did)))
+                returncode = proc.wait(timeout=120)
+                logger.info("traceroute exit code=%s target=%s", returncode, target)
+                if returncode != 0:
+                    logger.warning("traceroute non-zero exit code=%s target=%s", returncode, target)
+                    error_line = _t("raw.traceroute_error", error=f"exit code {returncode}")
+                    output_lines.append(error_line)
+                    self._append_raw_log(did, error_line, mode="trace")
             except Exception as exc:
                 logger.exception("traceroute failed target=%s", target)
-                output = f"{type(exc).__name__}: {exc}"
-
-            self._append_raw_log(did, _t("raw.traceroute_start", target=target))
-            for line in output.splitlines()[:20]:
-                self._append_raw_log(did, line)
+                error_line = _t("raw.traceroute_error", error=f"{type(exc).__name__}: {exc}")
+                output_lines.append(error_line)
+                self._append_raw_log(did, error_line, mode="trace")
 
             def _show() -> None:
                 title = _t("traceroute.title", target=name or target)
+                output = "\n".join(output_lines).strip()
                 dlg = TracerouteDialog(title=title, output=output, parent=self._admin_win or self._user_win)
                 dlg.exec()
                 self._update_details_panel(did)
-                logger.info("UI: traceroute finished device_id=%s target=%s", did, target)
+                logger.info("UI: traceroute finished device_id=%s target=%s lines=%s", did, target, len(output_lines))
 
             QTimer.singleShot(0, _show)
 
