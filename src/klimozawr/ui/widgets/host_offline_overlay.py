@@ -48,4 +48,4 @@ class HostOfflineOverlay(QWidget):
     def sync_geometry(self) -> None:
         parent = self.parentWidget()
         if parent:
-            self.setGeometry(0, 0, parent.width(), parent.height())
+            self.setGeometry(parent.rect())

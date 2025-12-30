@@ -12,7 +12,7 @@ import subprocess
 import threading
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, Signal, QTimer
+from PySide6.QtCore import QObject, Signal, QTimer, QPointer
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog, QPushButton
 
 from klimozawr.config import AppPaths
@@ -265,6 +265,7 @@ class AppController(QObject):
 
         self._user_win: UserMainWindow | None = None
         self._admin_win: AdminMainWindow | None = None
+        self._current_window: QPointer | None = None
         self._sound_book: dict[tuple[int, str], str] = {}
 
         # snapshots for UI cards
@@ -299,6 +300,7 @@ class AppController(QObject):
         self._rotation_timer.timeout.connect(self._maybe_rotate)
         self.tick_received.connect(self._on_tick_from_engine)
         self.alert_received.connect(self._on_alert_from_engine)
+        self.device_updated.connect(self._on_device_updated)
 
         self._chart_timer = QTimer()
         self._chart_timer.setInterval(10 * 1000)
@@ -314,7 +316,7 @@ class AppController(QObject):
         self._host_offline_threshold = 3
         self._host_check_inflight = False
         self._host_check_timer = QTimer()
-        self._host_check_timer.setInterval(7 * 1000)
+        self._host_check_timer.setInterval(5 * 1000)
         self._host_check_timer.timeout.connect(self._schedule_host_check)
 
     def start(self) -> None:
@@ -358,6 +360,7 @@ class AppController(QObject):
 
         win = UserMainWindow()
         self._user_win = win
+        self._current_window = QPointer(win)
 
         self._wire_common_window(win)
         self._reload_devices()
@@ -371,6 +374,7 @@ class AppController(QObject):
 
         win = AdminMainWindow()
         self._admin_win = win
+        self._current_window = QPointer(win)
 
         self._wire_common_window(win)
         self._wire_admin_window(win)
@@ -382,6 +386,7 @@ class AppController(QObject):
 
     def _close_windows(self) -> None:
         self._disconnect_ui_signals()
+        self._current_window = None
 
         if self._admin_win:
             self._dispose_window(self._admin_win)
@@ -398,8 +403,7 @@ class AppController(QObject):
 
     def _disconnect_ui_signals(self) -> None:
         # Qt: если не отключать, сигналы будут стрелять в мёртвые окна после логаута
-        for sig in (getattr(self, "device_updated", None),
-                    getattr(self, "alert_fired", None),
+        for sig in (getattr(self, "alert_fired", None),
                     getattr(self, "alert_cleared", None),
                     getattr(self, "alerts_changed", None)):
             if sig is None:
@@ -434,11 +438,6 @@ class AppController(QObject):
             self._safe_disconnect(win.action_settings, win.action_settings.triggered)
             win.action_settings.setEnabled(True)
             win.action_settings.triggered.connect(self.open_settings)
-
-        # обновления карточек
-        self.device_updated.connect(
-            lambda did: win.cards.update_device(self._snapshots[did]) if did in self._snapshots else None
-        )
 
         # если окно содержит детали/алерты (только админ и старый user-режим)
         if hasattr(win, "details") and hasattr(win, "alerts"):
@@ -812,6 +811,16 @@ class AppController(QObject):
             self._refresh_chart(details.current_period_key)
         self._update_details_panel(did)
 
+    def _on_device_updated(self, device_id: int) -> None:
+        win = self._current_window
+        if not win:
+            return
+        snap = self._snapshots.get(int(device_id))
+        if not snap:
+            return
+        if hasattr(win, "cards"):
+            win.cards.update_device(snap)
+
     def _update_details_panel(self, device_id: int) -> None:
         win = self._admin_win or self._user_win
         if not win or not hasattr(win, "details"):
@@ -1016,10 +1025,9 @@ class AppController(QObject):
         self._alert_sound_manager.set_host_offline(offline)
         logger.info("host connectivity offline=%s", offline)
         self._engine.set_paused(offline)
-        if self._user_win:
-            self._user_win.set_host_offline_visible(offline)
-        if self._admin_win:
-            self._admin_win.set_host_offline_visible(offline)
+        win = self._current_window
+        if win and hasattr(win, "set_host_offline_visible"):
+            win.set_host_offline_visible(offline)
         if offline:
             offline_path = self._select_sound_path_chain(
                 self._global_sounds.get("offline", ""),
