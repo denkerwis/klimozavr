@@ -21,7 +21,25 @@ $installTarget = if ($hasGuiExtra) { ".[gui]" } else { "." }
 & $py -m pip install -e $installTarget
 & $py -m pip install pyinstaller
 
+Write-Host "== Checking default WAV assets =="
+$defaultWavs = @(
+  "resources\sounds\red.wav",
+  "resources\sounds\yellow.wav",
+  "resources\sounds\offline.wav",
+  "resources\sounds\up.wav"
+)
+foreach ($wav in $defaultWavs) {
+  $wavPath = Join-Path $repoRoot $wav
+  if (-not (Test-Path $wavPath)) {
+    Write-Warning "Missing default WAV: $wavPath"
+  }
+}
+
 Write-Host "== Building EXE with PyInstaller (onedir) =="
 & $py -m PyInstaller (Join-Path $repoRoot "klimozawr.spec") --noconfirm --clean
+
+if ($LASTEXITCODE -ne 0) {
+  throw "PyInstaller failed with exit code $LASTEXITCODE"
+}
 
 Write-Host "Build complete: $repoRoot\dist\klimozawr\klimozawr.exe"
