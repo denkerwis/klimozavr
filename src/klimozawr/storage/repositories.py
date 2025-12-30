@@ -113,6 +113,8 @@ class DeviceRepo:
                     icon_scale=int(r["icon_scale"]),
                     sound_down_path=r["sound_down_path"],
                     sound_up_path=r["sound_up_path"],
+                    sound_warning_path=r["sound_warning_path"],
+                    sound_critical_path=r["sound_critical_path"],
                 )
             )
         return out
@@ -136,6 +138,7 @@ class DeviceRepo:
                   name=?, comment=?, location=?, owner=?,
                   yellow_to_red_secs=?, yellow_notify_after_secs=?, ping_timeout_ms=?,
                   icon_path=?, icon_scale=?, sound_down_path=?, sound_up_path=?,
+                  sound_warning_path=?, sound_critical_path=?,
                   updated_at_utc=?
                 WHERE id=?;
                 """,
@@ -151,6 +154,8 @@ class DeviceRepo:
                     int(d.get("icon_scale", 100)),
                     d.get("sound_down_path", ""),
                     d.get("sound_up_path", ""),
+                    d.get("sound_warning_path", ""),
+                    d.get("sound_critical_path", ""),
                     now,
                     did,
                 ),
@@ -168,6 +173,7 @@ class DeviceRepo:
               ip, name, comment, location, owner,
               yellow_to_red_secs, yellow_notify_after_secs, ping_timeout_ms,
               icon_path, icon_scale, sound_down_path, sound_up_path,
+              sound_warning_path, sound_critical_path,
               created_at_utc, updated_at_utc
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?);
             """,
@@ -184,6 +190,8 @@ class DeviceRepo:
                 int(d.get("icon_scale", 100)),
                 d.get("sound_down_path", ""),
                 d.get("sound_up_path", ""),
+                d.get("sound_warning_path", ""),
+                d.get("sound_critical_path", ""),
                 now,
                 now,
             ),
@@ -212,6 +220,7 @@ class DeviceRepo:
               ip=?, name=?, comment=?, location=?, owner=?,
               yellow_to_red_secs=?, yellow_notify_after_secs=?, ping_timeout_ms=?,
               icon_path=?, icon_scale=?, sound_down_path=?, sound_up_path=?,
+              sound_warning_path=?, sound_critical_path=?,
               updated_at_utc=?
             WHERE id=?;
             """,
@@ -228,6 +237,8 @@ class DeviceRepo:
                 int(d.get("icon_scale", 100)),
                 d.get("sound_down_path", ""),
                 d.get("sound_up_path", ""),
+                d.get("sound_warning_path", ""),
+                d.get("sound_critical_path", ""),
                 now,
                 int(device_id),
             ),

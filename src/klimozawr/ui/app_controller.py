@@ -14,9 +14,10 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog, QPushButton
 
 from klimozawr.config import AppPaths
 from klimozawr.core.models import Device, TickResult
+from klimozawr.core.net import is_host_online
 from klimozawr.core.monitor_engine import MonitorEngine
 from klimozawr.services.rotation import run_daily_rotation, RotationConfig
-from klimozawr.services.sound import SoundManager
+from klimozawr.services.sound import SoundManager, AlertSoundManager
 from klimozawr.storage.db import SQLiteDatabase
 from klimozawr.storage.repositories import UserRepo, DeviceRepo, TelemetryRepo, AlertRepo, SettingsRepo
 from klimozawr.ui.resources import resource_path
@@ -86,11 +87,15 @@ class AppController(QObject):
         yellow_wav = resource_path("resources/sounds/yellow.wav")
         red_wav = resource_path("resources/sounds/red.wav")
         self._sound = SoundManager(yellow_wav=yellow_wav, red_wav=red_wav)
+        self._alert_sound = AlertSoundManager(self._sound)
+        self._alert_fallbacks = {
+            "warning": str(yellow_wav),
+            "critical": str(red_wav),
+            "offline": str(red_wav),
+        }
 
         self._user_win: UserMainWindow | None = None
         self._admin_win: AdminMainWindow | None = None
-        self._sound_book: dict[tuple[int, str], str] = {}
-
         # snapshots for UI cards
         self._snapshots: dict[int, dict] = {}
         self._raw_logs: dict[int, list[str]] = {}
@@ -99,6 +104,9 @@ class AppController(QObject):
         self._global_sounds = {
             "down": self.settings.get("sound_down_path", ""),
             "up": self.settings.get("sound_up_path", ""),
+            "warning": self.settings.get("default_warning_wav", ""),
+            "critical": self.settings.get("default_critical_wav", ""),
+            "offline": self.settings.get("default_offline_wav", ""),
         }
 
         # minute aggregation buffers
@@ -117,6 +125,12 @@ class AppController(QObject):
         self._chart_timer.setInterval(10 * 1000)
         self._chart_timer.timeout.connect(self._refresh_selected_chart)
 
+        self._host_offline = False
+        self._host_check_in_flight = False
+        self._host_timer = QTimer()
+        self._host_timer.setInterval(5 * 1000)
+        self._host_timer.timeout.connect(self._schedule_host_check)
+
     def start(self) -> None:
         # first-run admin
         if self.users.count_users() == 0:
@@ -130,6 +144,7 @@ class AppController(QObject):
         self._engine.start()
         self._rotation_timer.start()
         self._chart_timer.start()
+        self._host_timer.start()
         self._maybe_rotate()
 
         self._show_login()
@@ -255,6 +270,9 @@ class AppController(QObject):
             win.details.export_selected_requested.connect(self.export_selected_logs)
             win.details.export_all_requested.connect(self.export_all_logs)
 
+        if hasattr(win, "set_offline_overlay_visible"):
+            win.set_offline_overlay_visible(self._host_offline)
+
     def _wire_admin_window(self, win: AdminMainWindow) -> None:
         # --- inject Refresh button into admin UI (without touching admin_main.py) ---
         if not hasattr(win, "btn_refresh"):
@@ -318,6 +336,8 @@ class AppController(QObject):
                     "icon_scale": d.icon_scale,
                     "sound_down_path": d.sound_down_path,
                     "sound_up_path": d.sound_up_path,
+                    "sound_warning_path": d.sound_warning_path,
+                    "sound_critical_path": d.sound_critical_path,
                     "status": "YELLOW",
                     "unstable": False,
                     "loss_pct": 100,
@@ -342,6 +362,8 @@ class AppController(QObject):
                     "icon_scale": d.icon_scale,
                     "sound_down_path": d.sound_down_path,
                     "sound_up_path": d.sound_up_path,
+                    "sound_warning_path": d.sound_warning_path,
+                    "sound_critical_path": d.sound_critical_path,
                 })
 
         # drop removed
@@ -382,7 +404,53 @@ class AppController(QObject):
 
         QTimer.singleShot(0, _update)
 
+    def _schedule_host_check(self) -> None:
+        if self._host_check_in_flight:
+            return
+        self._host_check_in_flight = True
+
+        def _worker() -> None:
+            online = is_host_online()
+
+            def _apply() -> None:
+                self._host_check_in_flight = False
+                self._set_host_offline(not online)
+
+            QTimer.singleShot(0, _apply)
+
+        threading.Thread(target=_worker, name="host_offline_check", daemon=True).start()
+
+    def _set_host_offline(self, offline: bool) -> None:
+        if self._host_offline == bool(offline):
+            return
+        self._host_offline = bool(offline)
+        logger.warning("host offline state=%s", self._host_offline)
+        for win in (self._admin_win, self._user_win):
+            if win and hasattr(win, "set_offline_overlay_visible"):
+                win.set_offline_overlay_visible(self._host_offline)
+        if self._host_offline:
+            self._play_offline_sound()
+
+    def _resolve_existing_path(self, *candidates: str) -> tuple[str, bool]:
+        for candidate in candidates:
+            if candidate and Path(candidate).exists():
+                return str(candidate), False
+        fallback = self._alert_fallbacks.get("offline", "")
+        if fallback and Path(fallback).exists():
+            return str(fallback), True
+        return "", False
+
+    def _play_offline_sound(self) -> None:
+        path, is_fallback = self._resolve_existing_path(self._global_sounds.get("offline", ""))
+        if path:
+            loop_count = 6 if is_fallback else 1
+            self._sound.play_path(path, volume=1.0, loop_count=loop_count)
+        else:
+            self._sound.beep(duration_ms=6000, frequency=900)
+
     def _on_tick_from_engine(self, tick: TickResult) -> None:
+        if self._host_offline:
+            return
         # store raw tick
         self.telemetry.insert_tick(tick)
 
@@ -412,12 +480,6 @@ class AppController(QObject):
             # if we're not RED anymore, ensure RED alerts are not hanging
             elif effective_status == "YELLOW":
                 self.alerts.resolve_level(tick.device_id, "RED")
-
-            if effective_status == "GREEN":
-                self._sound_book.pop((int(tick.device_id), "YELLOW"), None)
-                self._sound_book.pop((int(tick.device_id), "RED"), None)
-            elif effective_status == "YELLOW":
-                self._sound_book.pop((int(tick.device_id), "RED"), None)
 
         # update snapshot for UI
         if tick.device_id in self._snapshots:
@@ -453,6 +515,8 @@ class AppController(QObject):
                 self._update_details_panel(tick.device_id)
 
     def _on_alert_from_engine(self, device_id: int, level: str) -> None:
+        if self._host_offline:
+            return
         st = self._engine.get_state(device_id)
         if not st:
             return
@@ -511,11 +575,39 @@ class AppController(QObject):
             "message": str(msg),
         }
 
-        sound_key = (int(device_id), str(level))
-        if self._sound_book.get(sound_key) != started:
-            self._sound_book[sound_key] = started
-            logger.info("sound play device=%s level=%s started_at=%s", device_id, level, started)
-            QTimer.singleShot(0, lambda lvl=level: self._sound.play(lvl))
+        device_path = ""
+        default_path = ""
+        fallback_path = ""
+        if level == "YELLOW":
+            device_path = str(snap.get("sound_warning_path", "") or "")
+            default_path = str(self._global_sounds.get("warning", "") or "")
+            fallback_path = self._alert_fallbacks["warning"]
+        elif level == "RED":
+            device_path = str(snap.get("sound_critical_path", "") or "")
+            default_path = str(self._global_sounds.get("critical", "") or "")
+            fallback_path = self._alert_fallbacks["critical"]
+        if level in {"YELLOW", "RED"}:
+            logger.info(
+                "sound alert device=%s level=%s device_path=%s default_path=%s",
+                device_id,
+                level,
+                device_path,
+                default_path,
+            )
+            QTimer.singleShot(
+                0,
+                lambda did=int(device_id),
+                lvl=str(level),
+                dpath=device_path,
+                ddefault=default_path,
+                dfallback=fallback_path: self._alert_sound.handle_alert(
+                    device_id=did,
+                    level=lvl,
+                    device_path=dpath,
+                    default_path=ddefault,
+                    fallback_path=dfallback,
+                ),
+            )
 
         # ✅ теперь UI получает событие сразу
         self.alert_fired.emit(payload)
@@ -664,6 +756,8 @@ class AppController(QObject):
             del buf[: len(buf) - self._raw_log_limit * 3]
 
     def _play_status_sound(self, device_id: int, status: str) -> None:
+        if self._host_offline:
+            return
         snap = self._snapshots.get(int(device_id), {})
         status = status.upper()
         if status == "GREEN":
@@ -674,7 +768,7 @@ class AppController(QObject):
             path = None
         if path:
             logger.info("sound play device=%s status=%s path=%s", device_id, status, path)
-            self._sound.play_path(str(path))
+            self._sound.play_path(str(path), volume=0.9)
         else:
             logger.info("sound not configured device=%s status=%s", device_id, status)
 
@@ -794,6 +888,9 @@ class AppController(QObject):
         initial = {
             "sound_down_path": self.settings.get("sound_down_path", ""),
             "sound_up_path": self.settings.get("sound_up_path", ""),
+            "default_warning_wav": self.settings.get("default_warning_wav", ""),
+            "default_critical_wav": self.settings.get("default_critical_wav", ""),
+            "default_offline_wav": self.settings.get("default_offline_wav", ""),
         }
         dlg = SettingsDialog(initial=initial, parent=self._admin_win)
         if dlg.exec() != QDialog.Accepted:
@@ -801,11 +898,27 @@ class AppController(QObject):
         payload = dlg.payload()
         down = self._save_asset(payload.get("sound_down_path", ""), "sounds")
         up = self._save_asset(payload.get("sound_up_path", ""), "sounds")
+        warning = self._save_asset(payload.get("default_warning_wav", ""), "sounds")
+        critical = self._save_asset(payload.get("default_critical_wav", ""), "sounds")
+        offline = self._save_asset(payload.get("default_offline_wav", ""), "sounds")
         self.settings.set("sound_down_path", down)
         self.settings.set("sound_up_path", up)
+        self.settings.set("default_warning_wav", warning)
+        self.settings.set("default_critical_wav", critical)
+        self.settings.set("default_offline_wav", offline)
         self._global_sounds["down"] = down
         self._global_sounds["up"] = up
-        logger.info("UI: settings updated global sounds down=%s up=%s", down, up)
+        self._global_sounds["warning"] = warning
+        self._global_sounds["critical"] = critical
+        self._global_sounds["offline"] = offline
+        logger.info(
+            "UI: settings updated global sounds down=%s up=%s warning=%s critical=%s offline=%s",
+            down,
+            up,
+            warning,
+            critical,
+            offline,
+        )
         QMessageBox.information(
             self._admin_win,
             _t("dialog.settings_saved_title"),
@@ -816,16 +929,22 @@ class AppController(QObject):
         icon = self._save_asset(payload.get("icon_path", ""), "icons")
         down = self._save_asset(payload.get("sound_down_path", ""), "sounds")
         up = self._save_asset(payload.get("sound_up_path", ""), "sounds")
+        warning = self._save_asset(payload.get("sound_warning_path", ""), "sounds")
+        critical = self._save_asset(payload.get("sound_critical_path", ""), "sounds")
         new_payload = dict(payload)
         new_payload["icon_path"] = icon
         new_payload["sound_down_path"] = down
         new_payload["sound_up_path"] = up
+        new_payload["sound_warning_path"] = warning
+        new_payload["sound_critical_path"] = critical
         logger.info(
-            "UI: apply per-host settings icon=%s scale=%s down=%s up=%s",
+            "UI: apply per-host settings icon=%s scale=%s down=%s up=%s warning=%s critical=%s",
             icon,
             payload.get("icon_scale", 100),
             down,
             up,
+            warning,
+            critical,
         )
         return new_payload
 

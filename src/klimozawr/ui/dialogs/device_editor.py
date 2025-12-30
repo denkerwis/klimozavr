@@ -60,13 +60,19 @@ class DeviceEditorDialog(QDialog):
 
         self.sound_down_path = QLineEdit()
         self.sound_up_path = QLineEdit()
+        self.sound_warning_path = QLineEdit()
+        self.sound_critical_path = QLineEdit()
 
         btn_icon = QPushButton(tr("device_editor.button.pick"))
         btn_sound_down = QPushButton(tr("device_editor.button.pick"))
         btn_sound_up = QPushButton(tr("device_editor.button.pick"))
+        btn_sound_warning = QPushButton(tr("device_editor.button.pick"))
+        btn_sound_critical = QPushButton(tr("device_editor.button.pick"))
         btn_icon.clicked.connect(lambda: self._pick_file(self.icon_path, tr("dialog.png_filter")))
         btn_sound_down.clicked.connect(lambda: self._pick_file(self.sound_down_path, tr("dialog.wav_filter")))
         btn_sound_up.clicked.connect(lambda: self._pick_file(self.sound_up_path, tr("dialog.wav_filter")))
+        btn_sound_warning.clicked.connect(lambda: self._pick_file(self.sound_warning_path, tr("dialog.wav_filter")))
+        btn_sound_critical.clicked.connect(lambda: self._pick_file(self.sound_critical_path, tr("dialog.wav_filter")))
 
         row_icon = QHBoxLayout()
         row_icon.addWidget(self.icon_path, 1)
@@ -79,6 +85,14 @@ class DeviceEditorDialog(QDialog):
         row_up = QHBoxLayout()
         row_up.addWidget(self.sound_up_path, 1)
         row_up.addWidget(btn_sound_up)
+
+        row_warning = QHBoxLayout()
+        row_warning.addWidget(self.sound_warning_path, 1)
+        row_warning.addWidget(btn_sound_warning)
+
+        row_critical = QHBoxLayout()
+        row_critical.addWidget(self.sound_critical_path, 1)
+        row_critical.addWidget(btn_sound_critical)
 
         form = QFormLayout()
         form.addRow(tr("device_editor.label.ip"), self.target)
@@ -93,6 +107,8 @@ class DeviceEditorDialog(QDialog):
         form.addRow(tr("device_editor.label.icon_scale"), self.icon_scale)
         form.addRow(tr("device_editor.label.sound_down"), row_down)
         form.addRow(tr("device_editor.label.sound_up"), row_up)
+        form.addRow(tr("device_editor.label.sound_warning"), row_warning)
+        form.addRow(tr("device_editor.label.sound_critical"), row_critical)
 
         btn_ok = QPushButton(tr("device_editor.button.ok"))
         btn_cancel = QPushButton(tr("device_editor.button.cancel"))
@@ -129,6 +145,8 @@ class DeviceEditorDialog(QDialog):
                 "icon_scale": getattr(initial, "icon_scale", 100),
                 "sound_down_path": getattr(initial, "sound_down_path", ""),
                 "sound_up_path": getattr(initial, "sound_up_path", ""),
+                "sound_warning_path": getattr(initial, "sound_warning_path", ""),
+                "sound_critical_path": getattr(initial, "sound_critical_path", ""),
             }
 
 
@@ -146,6 +164,8 @@ class DeviceEditorDialog(QDialog):
         self.icon_scale.setValue(int(_get(data, "icon_scale", 100) or 100))
         self.sound_down_path.setText(str(_get(data, "sound_down_path", "")) or "")
         self.sound_up_path.setText(str(_get(data, "sound_up_path", "")) or "")
+        self.sound_warning_path.setText(str(_get(data, "sound_warning_path", "")) or "")
+        self.sound_critical_path.setText(str(_get(data, "sound_critical_path", "")) or "")
 
     def _on_ok(self) -> None:
         target = self.target.text().strip()
@@ -176,4 +196,6 @@ class DeviceEditorDialog(QDialog):
             "icon_scale": int(self.icon_scale.value()),
             "sound_down_path": self.sound_down_path.text().strip(),
             "sound_up_path": self.sound_up_path.text().strip(),
+            "sound_warning_path": self.sound_warning_path.text().strip(),
+            "sound_critical_path": self.sound_critical_path.text().strip(),
         }
