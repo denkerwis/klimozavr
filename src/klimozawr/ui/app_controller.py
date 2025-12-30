@@ -12,7 +12,7 @@ import subprocess
 import threading
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, Signal, QTimer
+from PySide6.QtCore import QObject, Signal, QTimer, QThreadPool, QRunnable
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog, QPushButton
 from shiboken6 import isValid
 
@@ -49,6 +49,97 @@ class RepeatState:
     last_played: datetime
     count: int
     episode_key: str
+
+
+class HostConnectivityWorkerSignals(QObject):
+    finished = Signal(bool, bool)
+
+
+class HostConnectivityWorker(QRunnable):
+    def __init__(self, timeout_sec: float, targets: list[tuple[str, int]], signals: HostConnectivityWorkerSignals) -> None:
+        super().__init__()
+        self._timeout = timeout_sec
+        self._targets = targets
+        self.signals = signals
+
+    def run(self) -> None:
+        ok_primary = self._try_target(self._targets[0])
+        ok_secondary = self._try_target(self._targets[1])
+        self.signals.finished.emit(ok_primary, ok_secondary)
+
+    def _try_target(self, target: tuple[str, int]) -> bool:
+        host, port = target
+        try:
+            with socket.create_connection((host, port), timeout=self._timeout):
+                return True
+        except OSError:
+            return False
+
+
+class HostConnectivityMonitor(QObject):
+    state_changed = Signal(bool, int, bool)
+
+    def __init__(
+        self,
+        *,
+        interval_ms: int = 5000,
+        timeout_sec: float = 1.8,
+        threshold: int = 3,
+    ) -> None:
+        super().__init__()
+        self._fail_streak = 0
+        self._offline = False
+        self._inflight = False
+        self._threshold = threshold
+        self._timeout = timeout_sec
+        self._targets = [("1.1.1.1", 443), ("8.8.8.8", 443)]
+        self._thread_pool = QThreadPool.globalInstance()
+        self._host_timer = QTimer(self)
+        self._host_timer.setInterval(interval_ms)
+        self._host_timer.timeout.connect(self._schedule_check)
+
+    def start(self) -> None:
+        self._host_timer.start()
+        self._schedule_check()
+
+    def stop(self) -> None:
+        self._host_timer.stop()
+
+    def _schedule_check(self) -> None:
+        if self._inflight:
+            return
+        self._inflight = True
+        signals = HostConnectivityWorkerSignals()
+        signals.finished.connect(self._on_worker_finished)
+        worker = HostConnectivityWorker(self._timeout, self._targets, signals)
+        self._thread_pool.start(worker)
+
+    def _on_worker_finished(self, ok_primary: bool, ok_secondary: bool) -> None:
+        self._inflight = False
+        ok = ok_primary or ok_secondary
+        if ok:
+            self._fail_streak = 0
+        else:
+            self._fail_streak += 1
+
+        logger.debug(
+            "HOST_CHECK ok=%s fail_streak=%s probe_primary=%s probe_secondary=%s",
+            ok,
+            self._fail_streak,
+            ok_primary,
+            ok_secondary,
+        )
+
+        if self._offline and ok:
+            self._offline = False
+            logger.info("HOST_OFFLINE -> False fail_streak=%s ok=%s", self._fail_streak, ok)
+            self.state_changed.emit(False, self._fail_streak, ok)
+            return
+
+        if not self._offline and self._fail_streak >= self._threshold:
+            self._offline = True
+            logger.warning("HOST_OFFLINE -> True fail_streak=%s ok=%s", self._fail_streak, ok)
+            self.state_changed.emit(True, self._fail_streak, ok)
 
 
 class AlertSoundManager:
@@ -313,12 +404,8 @@ class AppController(QObject):
         self._repeat_state: dict[tuple[int, str], RepeatState] = {}
 
         self._host_offline = False
-        self._host_offline_failures = 0
-        self._host_offline_threshold = 3
-        self._host_check_inflight = False
-        self._host_check_timer = QTimer()
-        self._host_check_timer.setInterval(5 * 1000)
-        self._host_check_timer.timeout.connect(self._schedule_host_check)
+        self._host_monitor = HostConnectivityMonitor()
+        self._host_monitor.state_changed.connect(self._on_host_state_changed)
 
     def start(self) -> None:
         # first-run admin
@@ -334,7 +421,7 @@ class AppController(QObject):
         self._rotation_timer.start()
         self._chart_timer.start()
         self._alert_repeat_timer.start()
-        self._host_check_timer.start()
+        self._host_monitor.start()
         self._maybe_rotate()
 
         self._show_login()
@@ -975,51 +1062,8 @@ class AppController(QObject):
                 logger.info("sound repeat device=%s level=%s", device_id, level)
                 QTimer.singleShot(0, lambda did=device_id, lvl=level: self._play_alert_sound(did, lvl))
 
-    def _schedule_host_check(self) -> None:
-        if self._host_check_inflight:
-            return
-        self._host_check_inflight = True
-
-        def _worker() -> None:
-            ok_primary = self._try_host_connect("1.1.1.1", 443)
-            ok_secondary = self._try_host_connect("8.8.8.8", 443)
-            QTimer.singleShot(0, lambda: self._apply_host_check_result(ok_primary, ok_secondary))
-
-        threading.Thread(target=_worker, name="host_check", daemon=True).start()
-
-    def _try_host_connect(self, host: str, port: int) -> bool:
-        try:
-            with socket.create_connection((host, port), timeout=1.8):
-                return True
-        except OSError:
-            return False
-
-    def _apply_host_check_result(self, ok_primary: bool, ok_secondary: bool) -> None:
-        self._host_check_inflight = False
-        prev_failures = self._host_offline_failures
-        if not ok_primary and not ok_secondary:
-            self._host_offline_failures += 1
-        else:
-            self._host_offline_failures = 0
-
-        if self._host_offline and (ok_primary or ok_secondary):
-            logger.info(
-                "HOST_OFFLINE -> False fail_streak=%s probe_primary=%s probe_secondary=%s",
-                prev_failures,
-                ok_primary,
-                ok_secondary,
-            )
-            self._set_host_offline(False)
-            return
-
-        if not self._host_offline and self._host_offline_failures >= self._host_offline_threshold:
-            logger.warning(
-                "HOST_OFFLINE -> True fail_streak=%s probe_primary=%s probe_secondary=%s",
-                self._host_offline_failures,
-                ok_primary,
-                ok_secondary,
-            )
-            self._set_host_offline(True)
+    def _on_host_state_changed(self, offline: bool, fail_streak: int, ok: bool) -> None:
+        self._set_host_offline(bool(offline))
 
     def _set_host_offline(self, offline: bool) -> None:
         if self._host_offline == offline:
@@ -1028,11 +1072,6 @@ class AppController(QObject):
         self._alert_sound_manager.set_host_offline(offline)
         logger.info("host connectivity offline=%s", offline)
         self._engine.set_paused(offline)
-        win = self._current_win
-        if not win or not isValid(win):
-            return
-        if hasattr(win, "set_host_offline_visible"):
-            win.set_host_offline_visible(offline)
         if offline:
             offline_path = self._select_sound_path_chain(
                 self._global_sounds.get("offline", ""),
@@ -1042,6 +1081,9 @@ class AppController(QObject):
         else:
             self._engine.request_immediate_tick()
             self._refresh_cards_everywhere()
+        win = self._current_win
+        if win and isValid(win) and hasattr(win, "set_host_offline_visible"):
+            win.set_host_offline_visible(offline)
 
     def _play_status_sound(self, device_id: int, status: str, ts_utc: datetime | None = None) -> None:
         snap = self._snapshots.get(int(device_id), {})

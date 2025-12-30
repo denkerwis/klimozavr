@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMainWindow, QMessageBox
 
 from klimozawr.ui.strings import tr
 from klimozawr.ui.widgets.host_offline_overlay import HostOfflineOverlay
+
+logger = logging.getLogger("klimozawr.ui.base_main")
 
 class BaseMainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -44,8 +48,12 @@ class BaseMainWindow(QMainWindow):
 
     def set_host_offline_visible(self, visible: bool) -> None:
         if visible:
-            self._host_overlay.sync_geometry()
+            if self._host_overlay.parentWidget() is not self:
+                self._host_overlay.setParent(self)
+            self._host_overlay.setGeometry(self.rect())
             self._host_overlay.show()
             self._host_overlay.raise_()
+            logger.info("Overlay shown")
         else:
             self._host_overlay.hide()
+            logger.info("Overlay hidden")
