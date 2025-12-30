@@ -352,7 +352,8 @@ class AppController(QObject):
 
         yellow_wav = resource_path("resources/sounds/yellow.wav")
         red_wav = resource_path("resources/sounds/red.wav")
-        self._sound = SoundManager(yellow_wav=yellow_wav, red_wav=red_wav)
+        offline_wav = resource_path("resources/sounds/offline.wav")
+        self._sound = SoundManager(yellow_wav=yellow_wav, red_wav=red_wav, offline_wav=offline_wav)
         self._alert_sound_manager = AlertSoundManager()
 
         self._user_win: UserMainWindow | None = None
@@ -367,10 +368,10 @@ class AppController(QObject):
         self._raw_mode: dict[int, str] = {}
         self._raw_log_limit = 10
         self._builtin_sounds = {
-            "up": resource_path("resources/sounds/yellow.wav"),
+            "up": resource_path("resources/sounds/up.wav"),
             "unstable": resource_path("resources/sounds/yellow.wav"),
             "down": resource_path("resources/sounds/red.wav"),
-            "offline": resource_path("resources/sounds/red.wav"),
+            "offline": resource_path("resources/sounds/offline.wav"),
         }
         self._critical_sound_path = self._builtin_sounds["down"]
 
