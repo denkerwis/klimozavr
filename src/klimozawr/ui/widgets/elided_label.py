@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QLabel
+from shiboken6 import isValid
 
 
 class ElidedLabel(QLabel):
@@ -25,7 +26,12 @@ class ElidedLabel(QLabel):
         self._update_elide()
 
     def _update_elide(self) -> None:
-        width = max(0, self.contentsRect().width())
+        if not isValid(self):
+            return
+        try:
+            width = max(0, self.contentsRect().width())
+        except RuntimeError:
+            return
         if width <= 0:
             super().setText(self._full_text)
             self._set_elided(False)
