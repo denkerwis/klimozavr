@@ -171,7 +171,7 @@ class DeviceRepo:
               yellow_to_red_secs, yellow_notify_after_secs, ping_timeout_ms,
               icon_path, icon_scale, sound_down_path, sound_unstable_path, sound_up_path,
               created_at_utc, updated_at_utc
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
             """,
             (
                 target,
