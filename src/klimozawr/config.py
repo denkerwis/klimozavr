@@ -26,14 +26,17 @@ def _app_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _resource_root() -> Path:
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
-    return Path(__file__).resolve().parents[2]
-
-
 def resource_path(rel_path: str) -> str:
-    return str(_resource_root() / rel_path)
+    if getattr(sys, "frozen", False):
+        if hasattr(sys, "_MEIPASS"):
+            return str(Path(sys._MEIPASS) / rel_path)  # type: ignore[attr-defined]
+        exe_dir = Path(sys.executable).resolve().parent
+        direct_path = exe_dir / rel_path
+        if direct_path.exists():
+            return str(direct_path)
+        return str(exe_dir / "_internal" / rel_path)
+
+    return str(Path(__file__).resolve().parents[2] / rel_path)
 
 
 def get_paths() -> AppPaths:
