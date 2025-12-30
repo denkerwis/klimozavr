@@ -24,6 +24,8 @@ class Device:
     icon_scale: int = 100
     sound_down_path: str = ""
     sound_up_path: str = ""
+    sound_warning_path: str = ""
+    sound_critical_path: str = ""
 
 
 @dataclass(frozen=True)
