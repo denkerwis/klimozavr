@@ -27,7 +27,7 @@ class DummySoundManager:
     def play(self, level: str) -> None:
         self.played.append(level)
 
-    def play_path(self, wav_path: str) -> None:
+    def play_path(self, wav_path: str, *, volume: float = 0.9) -> None:
         self.played_paths.append(wav_path)
 
 

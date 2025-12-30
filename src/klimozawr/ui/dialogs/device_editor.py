@@ -59,13 +59,16 @@ class DeviceEditorDialog(QDialog):
         self.icon_scale.setValue(100)
 
         self.sound_down_path = QLineEdit()
+        self.sound_unstable_path = QLineEdit()
         self.sound_up_path = QLineEdit()
 
         btn_icon = QPushButton(tr("device_editor.button.pick"))
         btn_sound_down = QPushButton(tr("device_editor.button.pick"))
+        btn_sound_unstable = QPushButton(tr("device_editor.button.pick"))
         btn_sound_up = QPushButton(tr("device_editor.button.pick"))
         btn_icon.clicked.connect(lambda: self._pick_file(self.icon_path, tr("dialog.png_filter")))
         btn_sound_down.clicked.connect(lambda: self._pick_file(self.sound_down_path, tr("dialog.wav_filter")))
+        btn_sound_unstable.clicked.connect(lambda: self._pick_file(self.sound_unstable_path, tr("dialog.wav_filter")))
         btn_sound_up.clicked.connect(lambda: self._pick_file(self.sound_up_path, tr("dialog.wav_filter")))
 
         row_icon = QHBoxLayout()
@@ -75,6 +78,10 @@ class DeviceEditorDialog(QDialog):
         row_down = QHBoxLayout()
         row_down.addWidget(self.sound_down_path, 1)
         row_down.addWidget(btn_sound_down)
+
+        row_unstable = QHBoxLayout()
+        row_unstable.addWidget(self.sound_unstable_path, 1)
+        row_unstable.addWidget(btn_sound_unstable)
 
         row_up = QHBoxLayout()
         row_up.addWidget(self.sound_up_path, 1)
@@ -92,6 +99,7 @@ class DeviceEditorDialog(QDialog):
         form.addRow(tr("device_editor.label.icon"), row_icon)
         form.addRow(tr("device_editor.label.icon_scale"), self.icon_scale)
         form.addRow(tr("device_editor.label.sound_down"), row_down)
+        form.addRow(tr("device_editor.label.sound_unstable"), row_unstable)
         form.addRow(tr("device_editor.label.sound_up"), row_up)
 
         btn_ok = QPushButton(tr("device_editor.button.ok"))
@@ -128,6 +136,7 @@ class DeviceEditorDialog(QDialog):
                 "icon_path": getattr(initial, "icon_path", ""),
                 "icon_scale": getattr(initial, "icon_scale", 100),
                 "sound_down_path": getattr(initial, "sound_down_path", ""),
+                "sound_unstable_path": getattr(initial, "sound_unstable_path", ""),
                 "sound_up_path": getattr(initial, "sound_up_path", ""),
             }
 
@@ -145,6 +154,7 @@ class DeviceEditorDialog(QDialog):
         self.icon_path.setText(str(_get(data, "icon_path", "")) or "")
         self.icon_scale.setValue(int(_get(data, "icon_scale", 100) or 100))
         self.sound_down_path.setText(str(_get(data, "sound_down_path", "")) or "")
+        self.sound_unstable_path.setText(str(_get(data, "sound_unstable_path", "")) or "")
         self.sound_up_path.setText(str(_get(data, "sound_up_path", "")) or "")
 
     def _on_ok(self) -> None:
@@ -175,5 +185,6 @@ class DeviceEditorDialog(QDialog):
             "icon_path": self.icon_path.text().strip(),
             "icon_scale": int(self.icon_scale.value()),
             "sound_down_path": self.sound_down_path.text().strip(),
+            "sound_unstable_path": self.sound_unstable_path.text().strip(),
             "sound_up_path": self.sound_up_path.text().strip(),
         }
