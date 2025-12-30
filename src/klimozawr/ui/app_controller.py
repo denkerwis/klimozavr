@@ -977,23 +977,36 @@ class AppController(QObject):
 
     def _try_host_connect(self, host: str, port: int) -> bool:
         try:
-            with socket.create_connection((host, port), timeout=1.2):
+            with socket.create_connection((host, port), timeout=1.8):
                 return True
         except OSError:
             return False
 
     def _apply_host_check_result(self, ok_primary: bool, ok_secondary: bool) -> None:
         self._host_check_inflight = False
+        prev_failures = self._host_offline_failures
         if not ok_primary and not ok_secondary:
             self._host_offline_failures += 1
         else:
             self._host_offline_failures = 0
 
         if self._host_offline and (ok_primary or ok_secondary):
+            logger.info(
+                "HOST_OFFLINE -> False fail_streak=%s probe_primary=%s probe_secondary=%s",
+                prev_failures,
+                ok_primary,
+                ok_secondary,
+            )
             self._set_host_offline(False)
             return
 
         if not self._host_offline and self._host_offline_failures >= self._host_offline_threshold:
+            logger.warning(
+                "HOST_OFFLINE -> True fail_streak=%s probe_primary=%s probe_secondary=%s",
+                self._host_offline_failures,
+                ok_primary,
+                ok_secondary,
+            )
             self._set_host_offline(True)
 
     def _set_host_offline(self, offline: bool) -> None:
@@ -1014,6 +1027,7 @@ class AppController(QObject):
             )
             self._sound.play_path(offline_path, volume=1.0)
         else:
+            self._engine.request_immediate_tick()
             self._refresh_cards_everywhere()
 
     def _play_status_sound(self, device_id: int, status: str, ts_utc: datetime | None = None) -> None:
