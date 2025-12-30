@@ -12,8 +12,9 @@ import subprocess
 import threading
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, Signal, QTimer, QPointer
+from PySide6.QtCore import QObject, Signal, QTimer
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog, QPushButton
+from shiboken6 import isValid
 
 from klimozawr.config import AppPaths
 from klimozawr.core.models import Device, TickResult
@@ -225,9 +226,9 @@ class AppController(QObject):
 
     def _refresh_cards_everywhere(self) -> None:
         snaps = self._snapshots_list()
-        if self._user_win:
+        if self._user_win and isValid(self._user_win):
             self._user_win.cards.set_devices(snaps)
-        if self._admin_win:
+        if self._admin_win and isValid(self._admin_win):
             self._admin_win.cards.set_devices(snaps)
 
     def admin_refresh(self) -> None:
@@ -265,7 +266,7 @@ class AppController(QObject):
 
         self._user_win: UserMainWindow | None = None
         self._admin_win: AdminMainWindow | None = None
-        self._current_window: QPointer | None = None
+        self._current_win: UserMainWindow | AdminMainWindow | None = None
         self._sound_book: dict[tuple[int, str], str] = {}
 
         # snapshots for UI cards
@@ -360,7 +361,7 @@ class AppController(QObject):
 
         win = UserMainWindow()
         self._user_win = win
-        self._current_window = QPointer(win)
+        self._current_win = win
 
         self._wire_common_window(win)
         self._reload_devices()
@@ -374,7 +375,7 @@ class AppController(QObject):
 
         win = AdminMainWindow()
         self._admin_win = win
-        self._current_window = QPointer(win)
+        self._current_win = win
 
         self._wire_common_window(win)
         self._wire_admin_window(win)
@@ -386,7 +387,7 @@ class AppController(QObject):
 
     def _close_windows(self) -> None:
         self._disconnect_ui_signals()
-        self._current_window = None
+        self._current_win = None
 
         if self._admin_win:
             self._dispose_window(self._admin_win)
@@ -749,7 +750,7 @@ class AppController(QObject):
 
         # детали есть только в админ-окне (и в старом user-окне)
         win = self._admin_win or self._user_win
-        if win is None:
+        if not win or not isValid(win):
             return
 
         if not hasattr(win, "details"):
@@ -796,9 +797,9 @@ class AppController(QObject):
                 ts = self._to_local(ts)
                 points.append((ts, r.get("rtt_avg_ms"), float(r.get("loss_pct", 0))))
 
-        if self._user_win:
+        if self._user_win and isValid(self._user_win):
             self._user_win.details.chart.set_data(points)
-        if self._admin_win:
+        if self._admin_win and isValid(self._admin_win):
             self._admin_win.details.chart.set_data(points)
 
     def _refresh_selected_chart(self) -> None:
@@ -806,14 +807,16 @@ class AppController(QObject):
         if not did:
             return
         win = self._admin_win or self._user_win
+        if not win or not isValid(win):
+            return
         details = getattr(win, "details", None)
         if details and hasattr(details, "current_period_key"):
             self._refresh_chart(details.current_period_key)
         self._update_details_panel(did)
 
     def _on_device_updated(self, device_id: int) -> None:
-        win = self._current_window
-        if not win:
+        win = self._current_win
+        if not win or not isValid(win):
             return
         snap = self._snapshots.get(int(device_id))
         if not snap:
@@ -823,7 +826,7 @@ class AppController(QObject):
 
     def _update_details_panel(self, device_id: int) -> None:
         win = self._admin_win or self._user_win
-        if not win or not hasattr(win, "details"):
+        if not win or not isValid(win) or not hasattr(win, "details"):
             return
         snap = self._snapshots.get(int(device_id))
         if not snap:
@@ -1025,8 +1028,10 @@ class AppController(QObject):
         self._alert_sound_manager.set_host_offline(offline)
         logger.info("host connectivity offline=%s", offline)
         self._engine.set_paused(offline)
-        win = self._current_window
-        if win and hasattr(win, "set_host_offline_visible"):
+        win = self._current_win
+        if not win or not isValid(win):
+            return
+        if hasattr(win, "set_host_offline_visible"):
             win.set_host_offline_visible(offline)
         if offline:
             offline_path = self._select_sound_path_chain(
@@ -1393,7 +1398,7 @@ class AppController(QObject):
         return ""
 
     def _refresh_admin_lists(self) -> None:
-        if not self._admin_win:
+        if not self._admin_win or not isValid(self._admin_win):
             return
 
         from PySide6.QtCore import Qt
