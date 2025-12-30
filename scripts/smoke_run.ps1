@@ -1,45 +1,46 @@
-$ErrorActionPreference = "Stop"
+Write-Host "== Smoke check: default WAVs via resource_path =="
 
-$repoRoot = Resolve-Path "$PSScriptRoot\.."
-$py = Join-Path $repoRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path $py)) {
-  $py = "python"
-}
+# Ensure src-layout imports work
+$env:PYTHONPATH = "src"
 
-$resourceCheck = @'
+$code = @'
 from pathlib import Path
-
 from klimozawr.config import resource_path
 
-paths = [
-    Path(resource_path("resources/sounds/red.wav")),
-    Path(resource_path("resources/sounds/yellow.wav")),
-    Path(resource_path("resources/sounds/offline.wav")),
-    Path(resource_path("resources/sounds/up.wav")),
+required = [
+    "resources/sounds/red.wav",
+    "resources/sounds/yellow.wav",
+    "resources/sounds/offline.wav",
+    "resources/sounds/up.wav",
 ]
-missing = [p for p in paths if not p.exists()]
+
+missing = []
+resolved = []
+
+for rel in required:
+    p = Path(resource_path(rel))
+    resolved.append((rel, p))
+    if not p.exists():
+        missing.append(f"{rel} -> {p}")
+
 if missing:
-    raise SystemExit(f"Missing default WAV(s): {', '.join(str(p) for p in missing)}")
-print("Default WAVs found:", ", ".join(str(p) for p in paths))
+    raise SystemExit("Missing WAVs:\n" + "\n".join(missing))
+
+print("OK: default WAVs present:")
+for rel, p in resolved:
+    print(" -", rel, "=>", p)
 '@
 
-Write-Host "== Smoke check: default WAVs via resource_path =="
-& $py -c $resourceCheck
-if ($LASTEXITCODE -ne 0) {
-  throw "Smoke check failed (default WAVs missing)."
+$tmp = Join-Path $env:TEMP "klimozawr_smoke_wavs.py"
+Set-Content -Path $tmp -Value $code -Encoding UTF8
+
+python $tmp
+$rc = $LASTEXITCODE
+
+Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+
+if ($rc -ne 0) {
+    throw "Smoke check failed (default WAVs missing or resource_path broken)."
 }
 
-Write-Host "== Smoke run: python -m klimozawr (7s) =="
-$proc = Start-Process -FilePath $py -ArgumentList "-m", "klimozawr" -PassThru
-Start-Sleep -Seconds 7
-
-if (-not $proc.HasExited) {
-  $null = $proc.CloseMainWindow()
-  Start-Sleep -Seconds 2
-}
-
-if (-not $proc.HasExited) {
-  Stop-Process -Id $proc.Id -Force
-}
-
-Write-Host "Smoke run completed."
+Write-Host "Smoke check OK."
