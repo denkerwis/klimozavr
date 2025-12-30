@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Windows offline ICMP monitor (PySide6 + SQLite + Windows ICMP API)"
 requires-python = ">=3.12"
 dependencies = [
-  "PySide6>=6.7.0",
+  "PySide6~=6.7.0",
+  "shiboken6~=6.7.0",
   "argon2-cffi>=23.1.0",
 ]
 authors = [{name="klimozawr"}]

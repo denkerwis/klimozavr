@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,12 +15,25 @@ class AppPaths:
     db_path: Path
 
 
-def get_paths() -> AppPaths:
-    local = os.environ.get("LOCALAPPDATA")
-    if not local:
-        local = str(Path.home() / "AppData" / "Local")
+def _portable_enabled() -> bool:
+    raw = os.environ.get("KLIMOZAWR_PORTABLE", "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
-    base = Path(local) / "klimozawr"
+
+def _app_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
+def get_paths() -> AppPaths:
+    if _portable_enabled():
+        base = _app_root() / "KlimozawrData"
+    else:
+        appdata = os.environ.get("APPDATA")
+        if not appdata:
+            appdata = str(Path.home() / "AppData" / "Roaming")
+        base = Path(appdata) / "Klimozawr"
     data = base / "data"
     logs = base / "logs"
     exports = base / "exports"

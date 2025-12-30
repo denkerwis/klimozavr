@@ -12,11 +12,16 @@ a = Analysis(
     pathex=[str(project_root)],
     binaries=[],
     datas=[(str(resources_dir), "resources")],
-    hiddenimports=[],
+    hiddenimports=[
+        "PySide6.QtMultimedia",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        "pytest",
+        "tests",
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
