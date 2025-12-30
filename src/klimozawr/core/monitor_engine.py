@@ -31,6 +31,7 @@ class MonitorEngine:
 
         self._stop = threading.Event()
         self._paused = threading.Event()
+        self._force_tick = threading.Event()
         self._thread: threading.Thread | None = None
         self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ping")
 
@@ -80,6 +81,9 @@ class MonitorEngine:
         else:
             self._paused.clear()
 
+    def request_immediate_tick(self) -> None:
+        self._force_tick.set()
+
     def _run(self) -> None:
         logger.info("engine started")
         client = None
@@ -88,6 +92,9 @@ class MonitorEngine:
             next_tick = time.perf_counter()
 
             while not self._stop.is_set():
+                if self._force_tick.is_set() and not self._paused.is_set():
+                    self._force_tick.clear()
+                    next_tick = time.perf_counter()
                 nowp = time.perf_counter()
                 if nowp < next_tick:
                     time.sleep(min(0.05, next_tick - nowp))
