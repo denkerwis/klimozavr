@@ -7,13 +7,15 @@ if (-not (Test-Path $py)) {
 }
 
 $resourceCheck = @'
-from klimozawr.ui.resources import resource_path
+from pathlib import Path
+
+from klimozawr.config import resource_path
 
 paths = [
-    resource_path("resources/sounds/red.wav"),
-    resource_path("resources/sounds/yellow.wav"),
-    resource_path("resources/sounds/offline.wav"),
-    resource_path("resources/sounds/up.wav"),
+    Path(resource_path("resources/sounds/red.wav")),
+    Path(resource_path("resources/sounds/yellow.wav")),
+    Path(resource_path("resources/sounds/offline.wav")),
+    Path(resource_path("resources/sounds/up.wav")),
 ]
 missing = [p for p in paths if not p.exists()]
 if missing:
