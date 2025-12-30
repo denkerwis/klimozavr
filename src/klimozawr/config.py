@@ -26,6 +26,16 @@ def _app_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _resource_root() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parents[2]
+
+
+def resource_path(rel_path: str) -> str:
+    return str(_resource_root() / rel_path)
+
+
 def get_paths() -> AppPaths:
     if _portable_enabled():
         base = _app_root() / "KlimozawrData"
