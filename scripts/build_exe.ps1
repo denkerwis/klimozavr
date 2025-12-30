@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 
-$repoRoot = Resolve-Path "$PSScriptRoot\.."
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $repoRoot
 $venvPath = Join-Path $repoRoot ".venv"
 $py = Join-Path $venvPath "Scripts\python.exe"
 
@@ -8,6 +9,12 @@ if (-not (Test-Path $py)) {
   Write-Host "== Creating venv (.venv) =="
   & python -m venv $venvPath
 }
+
+if (-not (Test-Path $py)) {
+  throw "Python not found at: $py"
+}
+
+& $py --version
 
 & $py -m pip install --upgrade pip
 
